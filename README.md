@@ -79,9 +79,14 @@ No Windows, copie `.env.example` manualmente. Preencha:
 NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_sua_chave
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
+NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/seu_id
+IMAGEKIT_PUBLIC_KEY=public_sua_chave
+IMAGEKIT_PRIVATE_KEY=private_sua_chave
 ```
 
 No Supabase, adicione as URLs local e de produção em **Authentication → URL Configuration**. Para produção, configure `NEXT_PUBLIC_SITE_URL` com o domínio HTTPS real.
+
+As três variáveis do ImageKit habilitam avatar e banner. `IMAGEKIT_PRIVATE_KEY` é exclusiva do servidor e nunca deve receber o prefixo `NEXT_PUBLIC_`. O navegador envia a imagem WebP diretamente ao ImageKit usando um token curto e assinado; o arquivo não atravessa a Vercel.
 
 ## Banco de dados
 
@@ -100,7 +105,7 @@ npm test          # lint + build
 
 ## Deploy na Vercel
 
-O framework deve permanecer como Next.js e o diretório de saída deve ficar vazio/automático. Cadastre as três variáveis públicas acima. A Vercel entrega a aplicação e as Server Actions; áudio e tela continuam no WebRTC entre navegadores. Supabase transporta somente autenticação, dados, presença e sinalização.
+O framework deve permanecer como Next.js e o diretório de saída deve ficar vazio/automático. Cadastre as variáveis do Supabase, do site e do ImageKit. A Vercel entrega a aplicação, a assinatura temporária do upload e as Server Actions; as imagens seguem diretamente do navegador ao ImageKit. Áudio e tela continuam no WebRTC entre navegadores. Supabase transporta autenticação, dados, presença e sinalização.
 
 ## Limites atuais
 

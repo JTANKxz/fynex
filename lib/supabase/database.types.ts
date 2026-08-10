@@ -2,9 +2,9 @@ export type Database = {
   public: {
     Tables: {
       profiles: {
-        Row: { id: string; username: string; display_name: string; bio: string; avatar_url: string | null; accent_color: string; created_at: string; updated_at: string };
-        Insert: { id: string; username: string; display_name: string; bio?: string; avatar_url?: string | null; accent_color?: string; created_at?: string; updated_at?: string };
-        Update: { username?: string; display_name?: string; bio?: string; avatar_url?: string | null; accent_color?: string; updated_at?: string };
+        Row: { id: string; username: string; display_name: string; bio: string; avatar_url: string | null; avatar_file_id: string | null; banner_url: string | null; banner_file_id: string | null; accent_color: string; created_at: string; updated_at: string };
+        Insert: { id: string; username: string; display_name: string; bio?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; accent_color?: string; created_at?: string; updated_at?: string };
+        Update: { username?: string; display_name?: string; bio?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; accent_color?: string; updated_at?: string };
         Relationships: [];
       };
       communities: {

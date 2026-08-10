@@ -158,10 +158,10 @@ export default function Home() {
       sessionStorage.removeItem("nexo:user");
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) { router.replace("/login"); return; }
-      const { data: profile } = await supabase.from("profiles").select("id, display_name, accent_color").eq("id", authUser.id).single();
+      const { data: profile } = await supabase.from("profiles").select("id, display_name, accent_color, avatar_url").eq("id", authUser.id).single();
       if (cancelled) return;
       if (!profile) { await supabase.auth.signOut(); router.replace("/login?error=profile"); return; }
-      const current = { id: profile.id, name: profile.display_name, color: profile.accent_color };
+      const current = { id: profile.id, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
       userRef.current = current;
       setUser(current);
       await loadWorkspace();
@@ -553,7 +553,7 @@ export default function Home() {
 
     let disposed = false;
     const addMessage = async (row: MessageRow) => {
-      const { data: author } = await supabase.from("profiles").select("display_name, accent_color").eq("id", row.author_id).single();
+      const { data: author } = await supabase.from("profiles").select("display_name, accent_color, avatar_url").eq("id", row.author_id).single();
       if (!author || disposed) return;
       const incoming = messageFromRow(row, author);
       setMessages((old) => old.some((item) => item.id === incoming.id) ? old : [...old, incoming].slice(-150));
@@ -567,7 +567,7 @@ export default function Home() {
       .subscribe();
 
     void supabase.from("messages")
-      .select("id, channel_id, author_id, content, created_at, edited_at, profiles!messages_author_id_fkey(display_name, accent_color)")
+      .select("id, channel_id, author_id, content, created_at, edited_at, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
       .eq("channel_id", activeChannel)
       .order("created_at", { ascending: false })
       .limit(150)
@@ -760,7 +760,7 @@ export default function Home() {
       return;
     }
 
-    const sent = messageFromRow(data, { display_name: user.name, accent_color: user.color });
+    const sent = messageFromRow(data, { display_name: user.name, accent_color: user.color, avatar_url: user.avatarUrl ?? null });
     setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
     playSound(sentMessageSound.current);
     setDraft("");
@@ -816,7 +816,7 @@ export default function Home() {
         <div className="rail-spacer" />
         <div className="top-online"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></div>
         <button className="top-connections" onClick={() => setConnectionsTab("friends")} aria-label="Amigos e convites" title="Amigos e convites"><UserPlus size={16} /></button>
-        <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} small /></Link>
+        <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} small /></Link>
       </aside>
 
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
@@ -841,7 +841,7 @@ export default function Home() {
                     const peer = voicePeers[member.id];
                     const memberSpeaking = isCurrentUser ? speaking : !!peer?.speaking;
                     const memberMuted = isCurrentUser ? muted : (peer?.muted ?? member.muted ?? false);
-                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} small status={false} /><span>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
+                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
                   })}
                 </div>}
               </div>;
@@ -851,7 +851,7 @@ export default function Home() {
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
         {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC + Supabase</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
         <div className="user-panel">
-          <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} /></Link>
+          <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} /></Link>
           <div className="user-copy"><strong>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
@@ -905,7 +905,7 @@ export default function Home() {
             const previous = visibleMessages[index - 1];
             const grouped = previous?.authorId === message.authorId;
             return <article className={`message ${grouped ? "grouped" : ""}`} key={message.id}>
-              {!grouped && <Avatar name={message.author} color={message.color} status={false} />}
+              {!grouped && <Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} />}
               <div>{!grouped && <header><strong style={{ color: message.color }}>{message.author}</strong><time>{message.time}</time></header>}<p>{message.content}</p></div>
             </article>;
           })}
@@ -921,7 +921,7 @@ export default function Home() {
         <div className="prototype-tag"><Radio size={11} /> {activeCommunity.name.toUpperCase()}</div>
         <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>{voiceChannel ? voiceName : "Canal de voz"}</strong><small>{voiceChannel ? `${currentVoiceMembers.length} na conversa` : "Entre para conversar em tempo real"}</small><button onClick={() => voiceChannel ? leaveVoice() : voiceChannels[0] && void joinVoice(voiceChannels[0].id)} disabled={!voiceChannels.length}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
         <h3><Users size={12} /> PESSOAS ONLINE — {onlineMembers.length}</h3>
-        {onlineMembers.map((member, index) => <div className="member" key={member.id}><Avatar name={member.name} color={member.color} /><div><strong>{member.name}{index === 0 && <span>VOCÊ</span>}</strong><small>{index === 0 ? "Nesta aba" : "Online agora"}</small></div></div>)}
+        {onlineMembers.map((member, index) => <div className="member" key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} /><div><strong>{member.name}{index === 0 && <span>VOCÊ</span>}</strong><small>{index === 0 ? "Nesta aba" : "Online agora"}</small></div></div>)}
         {onlineMembers.length === 1 && <div className="alone-note"><Users size={18} /><strong>Só você por enquanto</strong><small>Abra o FYNEX em outra aba e escolha outro nome para testar.</small></div>}
       </aside>
       {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}

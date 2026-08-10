@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { CalendarDays, Edit3, Palette, ShieldCheck, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ProfileForm } from "@/components/profile/profile-form";
+import { ProfileMediaEditor } from "@/components/profile/profile-media-editor";
 import type { Profile } from "@/lib/supabase/database.types";
 
 export function ProfileExperience({ profile }: { profile: Profile }) {
@@ -28,9 +29,9 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
   return <>
     <section className="profile-stage" style={style}>
       <div className="profile-ambient" />
-      <div className="profile-cover"><span>FYNEX IDENTITY</span><Sparkles size={22} /></div>
+      <div className={`profile-cover ${profile.banner_url ? "has-image" : ""}`} style={profile.banner_url ? { backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,.08), rgba(0,0,0,.45)), url("${profile.banner_url}")` } : undefined}><span>FYNEX IDENTITY</span><Sparkles size={22} /></div>
       <div className="profile-identity-row">
-        <div className="profile-avatar-large">{initials}</div>
+        <div className={`profile-avatar-large ${profile.avatar_url ? "has-image" : ""}`} style={profile.avatar_url ? { backgroundImage: `url("${profile.avatar_url}")` } : undefined}>{profile.avatar_url ? null : initials}</div>
         <div><span className="profile-status"><i /> DISPONÍVEL</span><h1>{profile.display_name}</h1><strong>@{profile.username}</strong></div>
         <button className="profile-edit-button" onClick={() => setEditing(true)}><Edit3 size={16} />Editar perfil</button>
       </div>
@@ -47,6 +48,7 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
     {editing && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setEditing(false)}>
       <section className="profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="profile-edit-title" style={style}>
         <header><div><span className="auth-eyebrow">PERSONALIZAÇÃO</span><h2 id="profile-edit-title">Editar seu perfil</h2><p>As mudanças aparecem no seu card e nas conversas.</p></div><button onClick={() => setEditing(false)} aria-label="Fechar"><X size={19} /></button></header>
+        <ProfileMediaEditor profile={profile} onChanged={() => router.refresh()} />
         <ProfileForm profile={profile} onSaved={saved} onCancel={() => setEditing(false)} />
       </section>
     </div>}
