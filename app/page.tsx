@@ -2,13 +2,16 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Copy, Gift, Hash, Headphones, Menu, MessageCircle, Mic, MicOff, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Users, Volume2, VolumeX } from "lucide-react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { MessageRow } from "./lib/database.types";
+import { getSupabaseBrowserClient } from "./lib/supabase";
 
 type User = { id: string; name: string; color: string };
 type Message = { id: string; channel: string; author: string; authorId: string; color: string; content: string; time: string };
 type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream };
-type PresenceUser = User & { lastSeen: number };
+type PresenceUser = User & { onlineAt: string };
 type Signal = {
-  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state" | "chat" | "presence" | "presence-leave";
+  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state";
   from: string;
   to?: string;
   channel?: string;
@@ -16,7 +19,7 @@ type Signal = {
   color?: string;
   muted?: boolean;
   speaking?: boolean;
-  payload?: RTCSessionDescriptionInit | RTCIceCandidateInit | Message;
+  payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
 const colors = ["#8b7cff", "#44d7b6", "#ffad66", "#ff7597", "#70a8ff"];
@@ -33,8 +36,21 @@ function initials(name: string) {
   return name.trim().slice(0, 2).toUpperCase();
 }
 
-function nowLabel() {
-  return `Hoje às ${new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`;
+function messageFromRow(row: MessageRow): Message {
+  return {
+    id: row.id,
+    channel: row.channel,
+    author: row.username,
+    authorId: row.session_id,
+    color: row.color,
+    content: row.content,
+    time: new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(row.created_at)),
+  };
 }
 
 function Avatar({ name, color, status = true, small = false }: { name: string; color: string; status?: boolean; small?: boolean }) {
@@ -67,13 +83,16 @@ export default function Home() {
   const [deafened, setDeafened] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [micError, setMicError] = useState("");
+  const [realtimeError, setRealtimeError] = useState("");
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [sending, setSending] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
-  const channelRef = useRef(activeChannel);
   const voiceRef = useRef<string | null>(null);
   const userRef = useRef<User | null>(null);
   const localStream = useRef<MediaStream | null>(null);
   const peers = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const realtime = useRef<BroadcastChannel | null>(null);
+  const pendingIceCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const realtime = useRef<RealtimeChannel | null>(null);
   const messagesContainer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -86,13 +105,10 @@ export default function Home() {
         setUser(parsed);
         userRef.current = parsed;
       }
-      const savedMessages = localStorage.getItem("fynex:global-messages");
-      if (savedMessages) setMessages(JSON.parse(savedMessages));
     });
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => { channelRef.current = activeChannel; }, [activeChannel]);
   useEffect(() => { voiceRef.current = voiceChannel; }, [voiceChannel]);
   useEffect(() => { userRef.current = user; }, [user]);
   useEffect(() => {
@@ -103,12 +119,19 @@ export default function Home() {
 
   const post = useCallback((signal: Omit<Signal, "from">) => {
     const current = userRef.current;
-    if (current) realtime.current?.postMessage({ ...signal, from: current.id });
+    if (current) {
+      void realtime.current?.send({
+        type: "broadcast",
+        event: "voice-signal",
+        payload: { ...signal, from: current.id },
+      });
+    }
   }, []);
 
   const closePeer = useCallback((id: string) => {
     peers.current.get(id)?.close();
     peers.current.delete(id);
+    pendingIceCandidates.current.delete(id);
     setVoicePeers((old) => {
       const next = { ...old };
       delete next[id];
@@ -136,32 +159,24 @@ export default function Home() {
 
   useEffect(() => {
     if (!user) return;
-    const bus = new BroadcastChannel("fynex-realtime-v1");
-    realtime.current = bus;
-    const publishPresence = () => bus.postMessage({ type: "presence", from: user.id, name: user.name, color: user.color } satisfies Signal);
-    publishPresence();
-    const heartbeat = window.setInterval(publishPresence, 3000);
-    const prunePresence = window.setInterval(() => {
-      const cutoff = Date.now() - 8000;
-      setOnlineUsers((current) => Object.fromEntries(Object.entries(current).filter(([, onlineUser]) => onlineUser.lastSeen > cutoff)));
-    }, 4000);
-    bus.onmessage = async ({ data }: MessageEvent<Signal>) => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      queueMicrotask(() => setRealtimeError("Supabase não configurado neste ambiente."));
+      return;
+    }
+
+    let disposed = false;
+    const addMessage = (row: MessageRow) => {
+      const incoming = messageFromRow(row);
+      setMessages((old) => old.some((item) => item.id === incoming.id)
+        ? old
+        : [...old, incoming].slice(-150));
+    };
+
+    const handleSignal = async (data: Signal) => {
       const me = userRef.current;
       if (!me) return;
-      if (data.type === "presence") {
-        if (data.from !== me.id) setOnlineUsers((current) => ({ ...current, [data.from]: { id: data.from, name: data.name ?? "Visitante", color: data.color ?? colors[0], lastSeen: Date.now() } }));
-        return;
-      }
-      if (data.type === "presence-leave") {
-        setOnlineUsers((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== data.from)));
-        return;
-      }
       if (data.from === me.id || (data.to && data.to !== me.id)) return;
-      if (data.type === "chat" && data.payload) {
-        const incoming = data.payload as Message;
-        setMessages((old) => old.some((item) => item.id === incoming.id) ? old : [...old, incoming]);
-        return;
-      }
       if (data.type === "leave") { closePeer(data.from); return; }
       if (!voiceRef.current || data.channel !== voiceRef.current) return;
       try {
@@ -173,13 +188,31 @@ export default function Home() {
         } else if (data.type === "offer") {
           const pc = makePeer(data.from, data.name ?? "Visitante");
           await pc.setRemoteDescription(data.payload as RTCSessionDescriptionInit);
+          for (const candidate of pendingIceCandidates.current.get(data.from) ?? []) {
+            await pc.addIceCandidate(candidate);
+          }
+          pendingIceCandidates.current.delete(data.from);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           post({ type: "answer", to: data.from, channel: voiceRef.current, name: me.name, payload: answer });
         } else if (data.type === "answer") {
-          await peers.current.get(data.from)?.setRemoteDescription(data.payload as RTCSessionDescriptionInit);
+          const pc = peers.current.get(data.from);
+          if (!pc) return;
+          await pc.setRemoteDescription(data.payload as RTCSessionDescriptionInit);
+          for (const candidate of pendingIceCandidates.current.get(data.from) ?? []) {
+            await pc.addIceCandidate(candidate);
+          }
+          pendingIceCandidates.current.delete(data.from);
         } else if (data.type === "ice") {
-          await peers.current.get(data.from)?.addIceCandidate(data.payload as RTCIceCandidateInit);
+          const pc = peers.current.get(data.from);
+          if (!pc) return;
+          const candidate = data.payload as RTCIceCandidateInit;
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(candidate);
+          } else {
+            const queued = pendingIceCandidates.current.get(data.from) ?? [];
+            pendingIceCandidates.current.set(data.from, [...queued, candidate]);
+          }
         } else if (data.type === "voice-state") {
           setVoicePeers((old) => ({ ...old, [data.from]: { ...(old[data.from] ?? { id: data.from, name: data.name ?? "Visitante" }), muted: !!data.muted, speaking: !!data.speaking } }));
         }
@@ -187,12 +220,72 @@ export default function Home() {
         console.error("Falha na sinalização WebRTC", error);
       }
     };
+
+    const channel = supabase
+      .channel("fynex:global", {
+        config: {
+          presence: { key: user.id },
+          broadcast: { self: false, ack: false },
+        },
+      })
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState<PresenceUser>();
+        const next: Record<string, PresenceUser> = {};
+        Object.values(state).flat().forEach((presence) => {
+          if (presence.id && presence.id !== user.id) next[presence.id] = presence;
+        });
+        setOnlineUsers(next);
+      })
+      .on("broadcast", { event: "voice-signal" }, ({ payload }) => {
+        void handleSignal(payload as Signal);
+      })
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: "channel=eq.geral" },
+        ({ new: row }) => addMessage(row as MessageRow),
+      )
+      .subscribe(async (status, error) => {
+        if (disposed) return;
+        if (status === "SUBSCRIBED") {
+          realtime.current = channel;
+          setRealtimeConnected(true);
+          setRealtimeError("");
+          await channel.track({ ...user, onlineAt: new Date().toISOString() });
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          setRealtimeConnected(false);
+          setRealtimeError(error?.message ?? "Não foi possível conectar ao tempo real.");
+        }
+      });
+
+    void supabase
+      .from("messages")
+      .select("id, channel, session_id, username, color, content, created_at")
+      .eq("channel", "geral")
+      .order("created_at", { ascending: false })
+      .limit(150)
+      .then(({ data, error }) => {
+        if (disposed) return;
+        if (error) {
+          setRealtimeError("Não foi possível carregar as mensagens.");
+          return;
+        }
+        setMessages((data ?? []).reverse().map(messageFromRow));
+      });
+
     return () => {
-      bus.postMessage({ type: "presence-leave", from: user.id } satisfies Signal);
-      window.clearInterval(heartbeat);
-      window.clearInterval(prunePresence);
-      bus.close();
+      disposed = true;
+      if (voiceRef.current) {
+        void channel.send({
+          type: "broadcast",
+          event: "voice-signal",
+          payload: { type: "leave", from: user.id, channel: voiceRef.current } satisfies Signal,
+        });
+      }
+      void channel.untrack();
+      void supabase.removeChannel(channel);
       realtime.current = null;
+      setRealtimeConnected(false);
+      setOnlineUsers({});
     };
   }, [user, closePeer, makePeer, post]);
 
@@ -237,6 +330,10 @@ export default function Home() {
 
   const joinVoice = async (channel: string) => {
     if (voiceChannel === channel) return;
+    if (!realtime.current) {
+      setMicError("Aguarde a conexão em tempo real antes de entrar na voz.");
+      return;
+    }
     if (voiceChannel) leaveVoice();
     setMicError("");
     try {
@@ -253,6 +350,7 @@ export default function Home() {
     if (voiceRef.current) post({ type: "leave", channel: voiceRef.current });
     peers.current.forEach((peer) => peer.close());
     peers.current.clear();
+    pendingIceCandidates.current.clear();
     localStream.current?.getTracks().forEach((track) => track.stop());
     localStream.current = null;
     voiceRef.current = null;
@@ -268,16 +366,35 @@ export default function Home() {
     setMuted(next);
   };
 
-  const sendMessage = (event: FormEvent) => {
+  const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
-    if (!draft.trim() || !user) return;
-    const message: Message = { id: crypto.randomUUID(), channel: activeChannel, author: user.name, authorId: user.id, color: user.color, content: draft.trim(), time: nowLabel() };
-    setMessages((old) => {
-      const next = [...old, message];
-      localStorage.setItem("fynex:global-messages", JSON.stringify(next.slice(-150)));
-      return next;
-    });
-    post({ type: "chat", payload: message });
+    const content = draft.trim().slice(0, 2000);
+    const supabase = getSupabaseBrowserClient();
+    if (!content || !user || !supabase || sending) return;
+
+    setSending(true);
+    setRealtimeError("");
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
+        id: crypto.randomUUID(),
+        channel: activeChannel,
+        session_id: user.id,
+        username: user.name,
+        color: user.color,
+        content,
+      })
+      .select("id, channel, session_id, username, color, content, created_at")
+      .single();
+
+    setSending(false);
+    if (error) {
+      setRealtimeError("A mensagem não foi enviada. Tente novamente.");
+      return;
+    }
+
+    const sent = messageFromRow(data);
+    setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
     setDraft("");
   };
 
@@ -340,8 +457,8 @@ export default function Home() {
             ))}
           </section>
         </nav>
-        {micError && <div className="mic-error">{micError}</div>}
-        {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
+        {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
+        {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC + Supabase</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
         <div className="user-panel">
           <Avatar name={user.name} color={user.color} />
           <div className="user-copy"><strong>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
@@ -360,7 +477,7 @@ export default function Home() {
         </header>
 
         <div className="messages" ref={messagesContainer}>
-          <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Chat global</h2><p>Todo mundo que estiver online conversa aqui. Abra outra aba para testar em tempo real.</p></div>
+          <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Chat global</h2><p>Todo mundo conversa aqui em tempo real. Teste em outro navegador ou celular.</p></div>
           {visibleMessages.map((message, index) => {
             const previous = visibleMessages[index - 1];
             const grouped = previous?.authorId === message.authorId;
@@ -372,8 +489,8 @@ export default function Home() {
         </div>
         <form className="message-box" onSubmit={sendMessage}>
           <button type="button" aria-label="Adicionar anexo"><Plus size={17} /></button>
-          <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Escreva no chat global" />
-          <button type="button" aria-label="Enviar presente"><Gift size={16} /></button><button type="button" aria-label="Emoji"><Smile size={17} /></button><button className="send-button" type="submit" aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}><Send size={15} /></button>
+          <input maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={realtimeConnected ? "Escreva no chat global" : "Conectando ao chat..."} />
+          <button type="button" aria-label="Enviar presente"><Gift size={16} /></button><button type="button" aria-label="Emoji"><Smile size={17} /></button><button className="send-button" type="submit" disabled={sending || !draft.trim()} aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}><Send size={15} /></button>
         </form>
       </section>
 
