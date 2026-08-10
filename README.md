@@ -106,6 +106,8 @@ O framework deve permanecer como Next.js e o diretório de saída deve ficar vaz
 
 O P2P é econômico para o servidor, mas cada participante envia uma cópia da mídia para cada pessoa conectada. É adequado para salas pequenas. Antes de abrir salas grandes, será necessário adicionar TURN para redes restritivas e migrar mídia para uma SFU com bitrate adaptativo. Consulte [ROADMAP.md](./ROADMAP.md).
 
+A direção da mistura entre comunidades, grupos e mensagens está documentada em [PRODUCT-DIRECTION.md](./PRODUCT-DIRECTION.md).
+
 ## Licença
 
 Projeto privado em desenvolvimento. Nenhuma licença de redistribuição foi definida.

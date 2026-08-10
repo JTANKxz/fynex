@@ -1,12 +1,16 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Copy, Eye, EyeOff, Gift, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Eye, EyeOff, Gift, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { Message as MessageRow } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/client";
+import { CreateChannelModal } from "@/components/community/create-channel-modal";
 import { CreateCommunityModal } from "@/components/community/create-community-modal";
+import { ConnectionsModal, type ConnectionsTab } from "@/components/community/connections-modal";
+import { MediaSettingsModal, type ScreenPreset } from "@/components/community/media-settings-modal";
 import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
 import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
 
@@ -22,6 +26,9 @@ export default function Home() {
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [createCommunityOpen, setCreateCommunityOpen] = useState(false);
+  const [channelModalType, setChannelModalType] = useState<"text" | "voice" | null>(null);
+  const [connectionsTab, setConnectionsTab] = useState<ConnectionsTab | null>(null);
+  const [mediaSettingsOpen, setMediaSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
@@ -36,6 +43,10 @@ export default function Home() {
   const [onlineUsers, setOnlineUsers] = useState<Record<string, PresenceUser>>({});
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioInput, setSelectedAudioInput] = useState("");
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [echoCancellation, setEchoCancellation] = useState(true);
+  const [autoGainControl, setAutoGainControl] = useState(true);
+  const [screenPreset, setScreenPreset] = useState<ScreenPreset>("standard");
   const [audioTrackVersion, setAudioTrackVersion] = useState(0);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
@@ -66,7 +77,7 @@ export default function Home() {
     void sound.play().catch(() => undefined);
   }, []);
 
-  const loadWorkspace = useCallback(async (preferredCommunityId?: string) => {
+  const loadWorkspace = useCallback(async (preferredCommunityId?: string, preferredChannelId?: string) => {
     const { data: spaces, error } = await supabase.from("communities").select("*").order("created_at", { ascending: true });
     if (error) {
       setRealtimeError("Não foi possível carregar suas comunidades.");
@@ -95,7 +106,7 @@ export default function Home() {
     const nextChannels = loadedChannels ?? [];
     setActiveCommunityId(selected.id);
     setCommunityChannels(nextChannels);
-    setActiveChannel(nextChannels.find((channel) => channel.type === "text")?.id ?? null);
+    setActiveChannel(nextChannels.find((channel) => channel.type === "text" && channel.id === preferredChannelId)?.id ?? nextChannels.find((channel) => channel.type === "text")?.id ?? null);
   }, [activeCommunityId, supabase]);
 
   useEffect(() => {
@@ -300,11 +311,12 @@ export default function Home() {
     setMicError("");
     try {
       if (localScreenStream.current) await stopScreenShare(false);
+      const economy = screenPreset === "economy";
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          width: { ideal: 1280, max: 1280 },
-          height: { ideal: 720, max: 720 },
-          frameRate: { ideal: 30, max: 30 },
+          width: { ideal: economy ? 960 : 1280, max: economy ? 960 : 1280 },
+          height: { ideal: economy ? 540 : 720, max: economy ? 540 : 720 },
+          frameRate: { ideal: economy ? 24 : 30, max: economy ? 24 : 30 },
         },
         audio: false,
       });
@@ -321,7 +333,7 @@ export default function Home() {
       if (error instanceof DOMException && error.name === "NotAllowedError") return;
       setMicError("Não foi possível iniciar a transmissão de tela.");
     }
-  }, [post, stopScreenShare]);
+  }, [post, screenPreset, stopScreenShare]);
 
   const refreshAudioInputs = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -603,9 +615,9 @@ export default function Home() {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           ...(selectedAudioInput ? { deviceId: { exact: selectedAudioInput } } : {}),
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation,
+          noiseSuppression,
+          autoGainControl,
         },
       });
       localStream.current = stream;
@@ -665,9 +677,9 @@ export default function Home() {
       const replacementStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: { exact: deviceId },
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation,
+          noiseSuppression,
+          autoGainControl,
         },
       });
       const replacementTrack = replacementStream.getAudioTracks()[0];
@@ -684,6 +696,23 @@ export default function Home() {
       setAudioTrackVersion((version) => version + 1);
     } catch {
       setMicError("Não foi possível trocar o microfone.");
+    }
+  };
+
+  const updateAudioProcessing = async (setting: "noiseSuppression" | "echoCancellation" | "autoGainControl", enabled: boolean) => {
+    if (setting === "noiseSuppression") setNoiseSuppression(enabled);
+    if (setting === "echoCancellation") setEchoCancellation(enabled);
+    if (setting === "autoGainControl") setAutoGainControl(enabled);
+    const track = localStream.current?.getAudioTracks()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({
+        noiseSuppression: setting === "noiseSuppression" ? enabled : noiseSuppression,
+        echoCancellation: setting === "echoCancellation" ? enabled : echoCancellation,
+        autoGainControl: setting === "autoGainControl" ? enabled : autoGainControl,
+      });
+    } catch {
+      setMicError("Seu navegador não conseguiu aplicar esse ajuste ao microfone.");
     }
   };
 
@@ -753,7 +782,12 @@ export default function Home() {
     await loadWorkspace(communityId);
   };
 
-  if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}<CreateCommunityModal open={createCommunityOpen} onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} /></main>;
+  const handleChannelCreated = async (channelId: string, type: "text" | "voice") => {
+    setChannelModalType(null);
+    await loadWorkspace(activeCommunityId ?? undefined, type === "text" ? channelId : activeChannel ?? undefined);
+  };
+
+  if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
 
   return (
     <main className="app-shell">
@@ -765,21 +799,22 @@ export default function Home() {
         <div className="community-badge"><Radio size={14} /><span>{activeCommunity.name}</span></div>
         <div className="rail-spacer" />
         <div className="top-online"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></div>
-        <Avatar name={user.name} color={user.color} small />
+        <button className="top-connections" onClick={() => setConnectionsTab("friends")} aria-label="Amigos e convites" title="Amigos e convites"><UserPlus size={16} /></button>
+        <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} small /></Link>
       </aside>
 
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
         <header className="community-header"><div><span className="community-dot" style={{ background: activeCommunity.accent_color }}>{activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></header>
-        <div className="invite-card"><Copy size={15} /><div><strong>Convide alguém</strong><small>Abra o link em outra aba</small></div><button onClick={() => navigator.clipboard?.writeText(location.href)}>Copiar</button></div>
+        <div className="invite-card"><UserPlus size={15} /><div><strong>Convide alguém</strong><small>Amigos, convites e entrada</small></div><button onClick={() => setConnectionsTab("community")}>Gerenciar</button></div>
         <nav className="channel-nav">
           <section>
-            <div className="section-title"><span>CONVERSA</span></div>
+            <div className="section-title"><span>CANAIS DE TEXTO</span><button onClick={() => setChannelModalType("text")} aria-label="Criar canal de texto" title="Criar canal de texto"><Plus size={14} /></button></div>
             {textChannels.map((channel) => <button key={channel.id} className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.name}<i>{onlineMembers.length}</i></button>)}
           </section>
           <section className="voice-section">
-            <div className="section-title"><span>ÁUDIO EM TEMPO REAL</span></div>
+            <div className="section-title"><span>CANAIS DE VOZ</span><button onClick={() => setChannelModalType("voice")} aria-label="Criar canal de voz" title="Criar canal de voz"><Plus size={14} /></button></div>
             {voiceChannels.map((channel) => {
               const channelMembers = getVoiceMembers(channel.id);
               return <div key={channel.id}>
@@ -798,15 +833,14 @@ export default function Home() {
           </section>
         </nav>
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
-        {voiceChannel && audioInputs.length > 0 && <label className="device-picker"><Mic size={13} /><span>Entrada</span><select aria-label="Microfone de entrada" value={selectedAudioInput} onChange={(event) => void changeAudioInput(event.target.value)}>{audioInputs.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microfone ${index + 1}`}</option>)}</select></label>}
         {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC + Supabase</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
         <div className="user-panel">
-          <Avatar name={user.name} color={user.color} />
+          <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} /></Link>
           <div className="user-copy"><strong>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
           <button className={screenSharing ? "control-on screen-on" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()} aria-label={screenSharing ? "Parar transmissão de tela" : "Compartilhar tela"}>{screenSharing ? <Square size={14} /> : <MonitorUp size={15} />}</button>
-          <button aria-label="Configurações do perfil" onClick={() => router.push("/profile")}><Settings size={15} /></button>
+          <button aria-label="Configurações de áudio e transmissão" title="Áudio e transmissão" onClick={() => setMediaSettingsOpen(true)}><Settings size={15} /></button>
         </div>
       </aside>
 
@@ -874,7 +908,10 @@ export default function Home() {
         {onlineMembers.map((member, index) => <div className="member" key={member.id}><Avatar name={member.name} color={member.color} /><div><strong>{member.name}{index === 0 && <span>VOCÊ</span>}</strong><small>{index === 0 ? "Nesta aba" : "Online agora"}</small></div></div>)}
         {onlineMembers.length === 1 && <div className="alone-note"><Users size={18} /><strong>Só você por enquanto</strong><small>Abra o FYNEX em outra aba e escolha outro nome para testar.</small></div>}
       </aside>
-      <CreateCommunityModal open={createCommunityOpen} onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />
+      {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
+      {channelModalType && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={channelModalType} onClose={() => setChannelModalType(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
+      {connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} />}
+      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
     </main>
   );
 }

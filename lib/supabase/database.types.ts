@@ -8,9 +8,9 @@ export type Database = {
         Relationships: [];
       };
       communities: {
-        Row: { id: string; name: string; description: string; owner_id: string; accent_color: string; created_at: string; updated_at: string };
-        Insert: { id?: string; name: string; description?: string; owner_id: string; accent_color?: string; created_at?: string; updated_at?: string };
-        Update: { name?: string; description?: string; owner_id?: string; accent_color?: string; updated_at?: string };
+        Row: { id: string; name: string; description: string; owner_id: string; accent_color: string; join_policy: string; discoverable: boolean; created_at: string; updated_at: string };
+        Insert: { id?: string; name: string; description?: string; owner_id: string; accent_color?: string; join_policy?: string; discoverable?: boolean; created_at?: string; updated_at?: string };
+        Update: { name?: string; description?: string; owner_id?: string; accent_color?: string; join_policy?: string; discoverable?: boolean; updated_at?: string };
         Relationships: [{ foreignKeyName: "communities_owner_id_fkey"; columns: ["owner_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }];
       };
       community_members: {
@@ -27,6 +27,24 @@ export type Database = {
         Insert: { id?: string; community_id: string; name: string; type: string; position?: number; created_at?: string };
         Update: { name?: string; type?: string; position?: number };
         Relationships: [{ foreignKeyName: "channels_community_id_fkey"; columns: ["community_id"]; isOneToOne: false; referencedRelation: "communities"; referencedColumns: ["id"] }];
+      };
+      friendships: {
+        Row: { user_a: string; user_b: string; requested_by: string; status: string; created_at: string; responded_at: string | null };
+        Insert: { user_a: string; user_b: string; requested_by: string; status?: string; created_at?: string; responded_at?: string | null };
+        Update: { status?: string; responded_at?: string | null };
+        Relationships: [];
+      };
+      community_invitations: {
+        Row: { id: string; community_id: string; inviter_id: string; invitee_id: string; status: string; created_at: string; responded_at: string | null };
+        Insert: { id?: string; community_id: string; inviter_id: string; invitee_id: string; status?: string; created_at?: string; responded_at?: string | null };
+        Update: { status?: string; responded_at?: string | null };
+        Relationships: [];
+      };
+      community_join_requests: {
+        Row: { id: string; community_id: string; user_id: string; status: string; reviewed_by: string | null; created_at: string; reviewed_at: string | null };
+        Insert: { id?: string; community_id: string; user_id: string; status?: string; reviewed_by?: string | null; created_at?: string; reviewed_at?: string | null };
+        Update: { status?: string; reviewed_by?: string | null; reviewed_at?: string | null };
+        Relationships: [];
       };
       messages: {
         Row: { id: string; channel_id: string; author_id: string; content: string; created_at: string; edited_at: string | null };

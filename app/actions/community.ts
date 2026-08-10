@@ -10,6 +10,12 @@ const communitySchema = z.object({
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
 });
 
+const channelSchema = z.object({
+  communityId: z.uuid(),
+  name: z.string().trim().min(1).max(32),
+  type: z.enum(["text", "voice"]),
+});
+
 export type CommunityActionState = { error?: string; communityId?: string };
 
 export async function createCommunityAction(_state: CommunityActionState, formData: FormData): Promise<CommunityActionState> {
@@ -31,16 +37,58 @@ export async function createCommunityAction(_state: CommunityActionState, formDa
   if (error || !community) return { error: "Não foi possível criar a comunidade." };
 
   const { error: membershipError } = await supabase.from("community_members").insert({ community_id: community.id, user_id: userId, role: "owner" });
+  if (membershipError) {
+    await supabase.from("communities").delete().eq("id", community.id);
+    return { error: "Não foi possível vincular você à comunidade." };
+  }
+
   const { error: channelsError } = await supabase.from("channels").insert([
     { community_id: community.id, name: "geral", type: "text", position: 0 },
     { community_id: community.id, name: "conversa", type: "voice", position: 1 },
   ]);
 
-  if (membershipError || channelsError) {
+  if (channelsError) {
     await supabase.from("communities").delete().eq("id", community.id);
     return { error: "A comunidade não pôde ser finalizada. Tente novamente." };
   }
 
   revalidatePath("/");
   return { communityId: community.id };
+}
+
+export type ChannelActionState = { error?: string; channelId?: string; channelType?: "text" | "voice" };
+
+function channelSlug(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
+}
+
+export async function createChannelAction(_state: ChannelActionState, formData: FormData): Promise<ChannelActionState> {
+  const parsed = channelSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Confira o nome e o tipo do canal." };
+
+  const name = channelSlug(parsed.data.name);
+  if (!name) return { error: "Use pelo menos uma letra ou número no nome." };
+
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  const userId = data?.claims?.sub;
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { data: community } = await supabase.from("communities").select("id").eq("id", parsed.data.communityId).eq("owner_id", userId).maybeSingle();
+  if (!community) return { error: "Somente o dono pode criar canais." };
+
+  const { data: lastChannel } = await supabase.from("channels").select("position").eq("community_id", community.id).order("position", { ascending: false }).limit(1).maybeSingle();
+  const position = Math.min((lastChannel?.position ?? -1) + 1, 32767);
+  const { data: channel, error } = await supabase.from("channels").insert({
+    community_id: community.id,
+    name,
+    type: parsed.data.type,
+    position,
+  }).select("id, type").single();
+
+  if (error?.code === "23505") return { error: "Já existe um canal com esse nome nesta comunidade." };
+  if (error || !channel) return { error: "Não foi possível criar o canal." };
+
+  revalidatePath("/");
+  return { channelId: channel.id, channelType: channel.type as "text" | "voice" };
 }

@@ -11,6 +11,7 @@ Este quadro orienta o desenvolvimento sem transformar o MVP em um clone completo
 - [x] RLS e privilégios mínimos para perfis, comunidades, canais e mensagens
 - [x] Criação e troca de comunidades
 - [x] Canais de texto e voz por comunidade
+- [x] Criação ilimitada de canais com escolha entre texto e voz
 - [x] Chat autenticado em tempo real por canal
 - [x] Presença online isolada por comunidade
 - [x] Voz WebRTC P2P e seleção de microfone
@@ -31,7 +32,12 @@ Este quadro orienta o desenvolvimento sem transformar o MVP em um clone completo
 - [ ] Recuperação e alteração de senha
 - [ ] Exclusão de conta e exportação dos dados
 - [ ] Editar/excluir mensagens próprias na interface
-- [ ] Convites, grupos privados, funções e permissões avançadas
+- [ ] Renomear, ordenar e excluir canais
+- [ ] Convites e entrada de membros
+- [ ] Grupos rápidos e mensagens diretas
+- [ ] Funções e permissões avançadas por canal
+- [ ] Canais de anúncio e tópicos opcionais
+- [ ] Caixa de entrada unificada para menções, respostas e conversas diretas
 - [ ] TURN com credenciais temporárias
 - [ ] Limites de tamanho de sala P2P
 - [ ] Rate limits contra spam e abuso
