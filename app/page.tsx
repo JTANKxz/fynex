@@ -1,21 +1,21 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Copy, Gift, Hash, Headphones, Menu, MessageCircle, Mic, MicOff, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Users, Volume2, VolumeX } from "lucide-react";
+import { Bell, Copy, Gift, Hash, Headphones, Menu, MessageCircle, Mic, MicOff, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { MessageRow } from "./lib/database.types";
 import { getSupabaseBrowserClient } from "./lib/supabase";
 
 type User = { id: string; name: string; color: string };
 type Message = { id: string; channel: string; author: string; authorId: string; color: string; content: string; time: string };
-type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream };
+type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream; screenStream?: MediaStream };
 type PresenceUser = User & {
   onlineAt: string;
   voiceChannel?: string | null;
   muted?: boolean;
 };
 type Signal = {
-  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state";
+  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state" | "screen-state";
   from: string;
   to?: string;
   channel?: string;
@@ -23,6 +23,7 @@ type Signal = {
   color?: string;
   muted?: boolean;
   speaking?: boolean;
+  screenSharing?: boolean;
   payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
@@ -77,6 +78,18 @@ function RemoteAudio({ stream, muted }: { stream?: MediaStream; muted: boolean }
   return <audio ref={ref} autoPlay playsInline muted={muted} />;
 }
 
+function ScreenVideo({ stream, muted = true }: { stream: MediaStream; muted?: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    video.srcObject = stream;
+    void video.play().catch(() => undefined);
+    return () => { video.srcObject = null; };
+  }, [stream]);
+  return <video ref={ref} autoPlay playsInline muted={muted} />;
+}
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [name, setName] = useState("");
@@ -84,6 +97,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
+  const [screenSharing, setScreenSharing] = useState(false);
+  const [localScreenPreview, setLocalScreenPreview] = useState<MediaStream | null>(null);
   const [voicePeers, setVoicePeers] = useState<Record<string, VoicePeer>>({});
   const [voiceMembers, setVoiceMembers] = useState<Record<string, PresenceUser>>({});
   const [onlineUsers, setOnlineUsers] = useState<Record<string, PresenceUser>>({});
@@ -101,12 +116,14 @@ export default function Home() {
   const voiceRef = useRef<string | null>(null);
   const userRef = useRef<User | null>(null);
   const localStream = useRef<MediaStream | null>(null);
+  const localScreenStream = useRef<MediaStream | null>(null);
   const peers = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingIceCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const realtime = useRef<RealtimeChannel | null>(null);
   const messagesContainer = useRef<HTMLDivElement>(null);
   const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
   const sentMessageSound = useRef<HTMLAudioElement | null>(null);
+  const ownMessageIds = useRef<Set<string>>(new Set());
 
   const playSound = useCallback((sound: HTMLAudioElement | null) => {
     if (!sound) return;
@@ -130,6 +147,15 @@ export default function Home() {
       sentMessageSound.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!mobileNav) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNav(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNav]);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,13 +205,22 @@ export default function Home() {
     if (peers.current.has(id)) return peers.current.get(id)!;
     const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     localStream.current?.getTracks().forEach((track) => pc.addTrack(track, localStream.current!));
+    localScreenStream.current?.getVideoTracks().forEach((track) => pc.addTrack(track, localScreenStream.current!));
     pc.onicecandidate = (event) => {
       if (event.candidate && voiceRef.current) {
         post({ type: "ice", to: id, channel: voiceRef.current, payload: event.candidate.toJSON() });
       }
     };
     pc.ontrack = (event) => {
-      setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), stream: event.streams[0] } }));
+      const incomingStream = event.streams[0] ?? new MediaStream([event.track]);
+      if (event.track.kind === "video") {
+        setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: incomingStream } }));
+        event.track.onended = () => {
+          setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: undefined } }));
+        };
+      } else {
+        setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), stream: incomingStream } }));
+      }
     };
     pc.onconnectionstatechange = () => {
       if (["failed", "closed"].includes(pc.connectionState)) closePeer(id);
@@ -194,6 +229,71 @@ export default function Home() {
     setVoicePeers((old) => ({ ...old, [id]: old[id] ?? { id, name: peerName, muted: false, speaking: false } }));
     return pc;
   }, [closePeer, post]);
+
+  const renegotiatePeers = useCallback(async () => {
+    const current = userRef.current;
+    const channel = voiceRef.current;
+    if (!current || !channel) return;
+    await Promise.all([...peers.current.entries()].map(async ([id, peer]) => {
+      if (peer.signalingState !== "stable") return;
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      post({ type: "offer", to: id, channel, name: current.name, payload: offer });
+    }));
+  }, [post]);
+
+  const stopScreenShare = useCallback(async (renegotiate = true) => {
+    const stream = localScreenStream.current;
+    if (!stream) return;
+    const trackIds = new Set(stream.getTracks().map((track) => track.id));
+    peers.current.forEach((peer) => {
+      peer.getSenders().forEach((sender) => {
+        if (sender.track && trackIds.has(sender.track.id)) peer.removeTrack(sender);
+      });
+    });
+    localScreenStream.current = null;
+    setScreenSharing(false);
+    setLocalScreenPreview(null);
+    stream.getTracks().forEach((track) => track.stop());
+    if (voiceRef.current) post({ type: "screen-state", channel: voiceRef.current, screenSharing: false });
+    if (renegotiate) await renegotiatePeers();
+  }, [post, renegotiatePeers]);
+
+  const startScreenShare = useCallback(async () => {
+    if (!voiceRef.current || !realtime.current) {
+      setMicError("Entre na sala de voz antes de compartilhar a tela.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setMicError("Este navegador não oferece compartilhamento de tela.");
+      return;
+    }
+    setMicError("");
+    try {
+      if (localScreenStream.current) await stopScreenShare(false);
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1280, max: 1280 },
+          height: { ideal: 720, max: 720 },
+          frameRate: { ideal: 30, max: 30 },
+        },
+        audio: false,
+      });
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) throw new Error("Captura de tela sem vídeo");
+      videoTrack.contentHint = "detail";
+      localScreenStream.current = stream;
+      setScreenSharing(true);
+      setLocalScreenPreview(stream);
+      peers.current.forEach((peer) => peer.addTrack(videoTrack, stream));
+      videoTrack.onended = () => { void stopScreenShare(); };
+      post({ type: "screen-state", channel: voiceRef.current, screenSharing: true });
+      await renegotiatePeers();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "NotAllowedError") return;
+      setMicError("Não foi possível iniciar a transmissão de tela.");
+    }
+  }, [post, renegotiatePeers, stopScreenShare]);
 
   const refreshAudioInputs = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -225,7 +325,8 @@ export default function Home() {
       setMessages((old) => old.some((item) => item.id === incoming.id)
         ? old
         : [...old, incoming].slice(-150));
-      if (row.session_id !== user.id) playSound(receivedMessageSound.current);
+      const wasSentInThisTab = ownMessageIds.current.delete(row.id);
+      if (!wasSentInThisTab && row.session_id !== user.id) playSound(receivedMessageSound.current);
     };
 
     const handleSignal = async (data: Signal) => {
@@ -235,7 +336,15 @@ export default function Home() {
       if (data.type === "leave") { closePeer(data.from); return; }
       if (!voiceRef.current || data.channel !== voiceRef.current) return;
       try {
-        if (data.type === "announce") {
+        if (data.type === "screen-state") {
+          setVoicePeers((old) => ({
+            ...old,
+            [data.from]: {
+              ...(old[data.from] ?? { id: data.from, name: data.name ?? "Visitante", muted: false, speaking: false }),
+              screenStream: data.screenSharing ? old[data.from]?.screenStream : undefined,
+            },
+          }));
+        } else if (data.type === "announce") {
           const pc = makePeer(data.from, data.name ?? "Visitante");
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
@@ -377,6 +486,8 @@ export default function Home() {
       }
       void channel.untrack();
       void supabase.removeChannel(channel);
+      localScreenStream.current?.getTracks().forEach((track) => track.stop());
+      localScreenStream.current = null;
       realtime.current = null;
       setRealtimeConnected(false);
       setOnlineUsers({});
@@ -456,6 +567,7 @@ export default function Home() {
   };
 
   const leaveVoice = () => {
+    void stopScreenShare(false);
     if (voiceRef.current) post({ type: "leave", channel: voiceRef.current });
     const current = userRef.current;
     if (current) {
@@ -524,10 +636,13 @@ export default function Home() {
 
     setSending(true);
     setRealtimeError("");
+    const messageId = crypto.randomUUID();
+    ownMessageIds.current.add(messageId);
+    window.setTimeout(() => ownMessageIds.current.delete(messageId), 30000);
     const { data, error } = await supabase
       .from("messages")
       .insert({
-        id: crypto.randomUUID(),
+        id: messageId,
         channel: activeChannel,
         session_id: user.id,
         username: user.name,
@@ -539,6 +654,7 @@ export default function Home() {
 
     setSending(false);
     if (error) {
+      ownMessageIds.current.delete(messageId);
       setRealtimeError("A mensagem não foi enviada. Tente novamente.");
       return;
     }
@@ -560,6 +676,9 @@ export default function Home() {
   if (user && voiceChannel === "voice-geral" && !globalVoiceMembers.some((member) => member.id === user.id)) {
     globalVoiceMembers.unshift({ ...user, onlineAt: new Date().toISOString(), voiceChannel, muted });
   }
+  const remoteScreenPeer = Object.values(voicePeers).find((peer) => peer.screenStream);
+  const activeScreenStream = screenSharing ? localScreenPreview : remoteScreenPeer?.screenStream;
+  const screenPresenter = screenSharing ? user?.name : remoteScreenPeer?.name;
 
   if (!user) {
     return (
@@ -594,8 +713,10 @@ export default function Home() {
         <Avatar name={user.name} color={user.color} small />
       </aside>
 
+      <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
+
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <header className="community-header"><div><span className="community-dot">F</span><strong>FYNEX Global</strong></div></header>
+        <header className="community-header"><div><span className="community-dot">F</span><strong>FYNEX Global</strong></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></header>
         <div className="invite-card"><Copy size={15} /><div><strong>Convide alguém</strong><small>Abra o link em outra aba</small></div><button onClick={() => navigator.clipboard?.writeText(location.href)}>Copiar</button></div>
         <nav className="channel-nav">
           <section>
@@ -628,6 +749,7 @@ export default function Home() {
           <div className="user-copy"><strong>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
+          <button className={screenSharing ? "control-on screen-on" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()} aria-label={screenSharing ? "Parar transmissão de tela" : "Compartilhar tela"}>{screenSharing ? <Square size={14} /> : <MonitorUp size={15} />}</button>
           <button aria-label="Configurações"><Settings size={15} /></button>
         </div>
       </aside>
@@ -639,6 +761,11 @@ export default function Home() {
           <p>{currentChannel.description}</p>
           <div className="header-actions"><div className="header-online"><span />{onlineMembers.length} online</div><button aria-label="Notificações"><Bell size={16} /></button><label><Search size={14} /><input placeholder="Buscar no chat" /></label></div>
         </header>
+
+        {activeScreenStream && <section className="screen-stage">
+          <header><div><MonitorUp size={15} /><span><strong>{screenPresenter}</strong> está compartilhando a tela</span></div><div><b>720P · 30 FPS</b>{screenSharing && <button onClick={() => void stopScreenShare()}><Square size={12} /> Parar</button>}</div></header>
+          <div className="screen-player"><ScreenVideo stream={activeScreenStream} /></div>
+        </section>}
 
         <div className="messages" ref={messagesContainer}>
           <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Chat global</h2><p>Todo mundo conversa aqui em tempo real. Teste em outro navegador ou celular.</p></div>
