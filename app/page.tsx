@@ -78,7 +78,23 @@ export default function Home() {
   }, []);
 
   const loadWorkspace = useCallback(async (preferredCommunityId?: string, preferredChannelId?: string) => {
-    const { data: spaces, error } = await supabase.from("communities").select("*").order("created_at", { ascending: true });
+    const currentUserId = userRef.current?.id;
+    if (!currentUserId) return;
+
+    const { data: memberships, error: membershipError } = await supabase
+      .from("community_members")
+      .select("community_id")
+      .eq("user_id", currentUserId);
+
+    if (membershipError) {
+      setRealtimeError("Não foi possível carregar suas participações.");
+      return;
+    }
+
+    const communityIds = (memberships ?? []).map((membership) => membership.community_id);
+    const { data: spaces, error } = communityIds.length
+      ? await supabase.from("communities").select("*").in("id", communityIds).order("created_at", { ascending: true })
+      : { data: [], error: null };
     if (error) {
       setRealtimeError("Não foi possível carregar suas comunidades.");
       return;
