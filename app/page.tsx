@@ -9,7 +9,11 @@ import { getSupabaseBrowserClient } from "./lib/supabase";
 type User = { id: string; name: string; color: string };
 type Message = { id: string; channel: string; author: string; authorId: string; color: string; content: string; time: string };
 type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream };
-type PresenceUser = User & { onlineAt: string };
+type PresenceUser = User & {
+  onlineAt: string;
+  voiceChannel?: string | null;
+  muted?: boolean;
+};
 type Signal = {
   type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state";
   from: string;
@@ -65,8 +69,11 @@ function Avatar({ name, color, status = true, small = false }: { name: string; c
 function RemoteAudio({ stream, muted }: { stream?: MediaStream; muted: boolean }) {
   const ref = useRef<HTMLAudioElement>(null);
   useEffect(() => {
-    if (ref.current && stream) ref.current.srcObject = stream;
-  }, [stream]);
+    const audio = ref.current;
+    if (!audio) return;
+    audio.srcObject = stream ?? null;
+    if (stream && !muted) void audio.play().catch(() => undefined);
+  }, [stream, muted]);
   return <audio ref={ref} autoPlay playsInline muted={muted} />;
 }
 
@@ -78,7 +85,11 @@ export default function Home() {
   const [draft, setDraft] = useState("");
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
   const [voicePeers, setVoicePeers] = useState<Record<string, VoicePeer>>({});
+  const [voiceMembers, setVoiceMembers] = useState<Record<string, PresenceUser>>({});
   const [onlineUsers, setOnlineUsers] = useState<Record<string, PresenceUser>>({});
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioInput, setSelectedAudioInput] = useState("");
+  const [audioTrackVersion, setAudioTrackVersion] = useState(0);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -94,6 +105,31 @@ export default function Home() {
   const pendingIceCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const realtime = useRef<RealtimeChannel | null>(null);
   const messagesContainer = useRef<HTMLDivElement>(null);
+  const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
+  const sentMessageSound = useRef<HTMLAudioElement | null>(null);
+
+  const playSound = useCallback((sound: HTMLAudioElement | null) => {
+    if (!sound) return;
+    sound.currentTime = 0;
+    void sound.play().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const received = new Audio("/sounds/message-received.mp3");
+    const sent = new Audio("/sounds/message-sent.mp3");
+    received.preload = "auto";
+    sent.preload = "auto";
+    received.volume = 0.7;
+    sent.volume = 0.65;
+    receivedMessageSound.current = received;
+    sentMessageSound.current = sent;
+    return () => {
+      received.pause();
+      sent.pause();
+      receivedMessageSound.current = null;
+      sentMessageSound.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,18 +180,36 @@ export default function Home() {
     const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     localStream.current?.getTracks().forEach((track) => pc.addTrack(track, localStream.current!));
     pc.onicecandidate = (event) => {
-      if (event.candidate) post({ type: "ice", to: id, payload: event.candidate.toJSON() });
+      if (event.candidate && voiceRef.current) {
+        post({ type: "ice", to: id, channel: voiceRef.current, payload: event.candidate.toJSON() });
+      }
     };
     pc.ontrack = (event) => {
       setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), stream: event.streams[0] } }));
     };
     pc.onconnectionstatechange = () => {
-      if (["failed", "closed", "disconnected"].includes(pc.connectionState)) closePeer(id);
+      if (["failed", "closed"].includes(pc.connectionState)) closePeer(id);
     };
     peers.current.set(id, pc);
     setVoicePeers((old) => ({ ...old, [id]: old[id] ?? { id, name: peerName, muted: false, speaking: false } }));
     return pc;
   }, [closePeer, post]);
+
+  const refreshAudioInputs = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audioinput");
+    setAudioInputs(devices);
+    setSelectedAudioInput((current) => {
+      if (current && devices.some((device) => device.deviceId === current)) return current;
+      return devices[0]?.deviceId ?? "";
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.addEventListener) return;
+    navigator.mediaDevices.addEventListener("devicechange", refreshAudioInputs);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", refreshAudioInputs);
+  }, [refreshAudioInputs]);
 
   useEffect(() => {
     if (!user) return;
@@ -171,6 +225,7 @@ export default function Home() {
       setMessages((old) => old.some((item) => item.id === incoming.id)
         ? old
         : [...old, incoming].slice(-150));
+      if (row.session_id !== user.id) playSound(receivedMessageSound.current);
     };
 
     const handleSignal = async (data: Signal) => {
@@ -231,10 +286,49 @@ export default function Home() {
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState<PresenceUser>();
         const next: Record<string, PresenceUser> = {};
-        Object.values(state).flat().forEach((presence) => {
-          if (presence.id && presence.id !== user.id) next[presence.id] = presence;
+        const nextVoiceMembers: Record<string, PresenceUser> = {};
+        const presences = Object.values(state).flat();
+        presences.forEach((presence) => {
+          if (!presence.id) return;
+          if (presence.id !== user.id) next[presence.id] = presence;
+          if (presence.voiceChannel) nextVoiceMembers[presence.id] = presence;
         });
         setOnlineUsers(next);
+        setVoiceMembers(nextVoiceMembers);
+
+        const currentVoiceChannel = voiceRef.current;
+        if (!currentVoiceChannel) return;
+
+        const connectedIds = new Set(
+          presences
+            .filter((presence) => presence.id !== user.id && presence.voiceChannel === currentVoiceChannel)
+            .map((presence) => presence.id),
+        );
+
+        peers.current.forEach((_, id) => {
+          if (!connectedIds.has(id)) closePeer(id);
+        });
+
+        presences.forEach((presence) => {
+          if (
+            presence.id === user.id
+            || presence.voiceChannel !== currentVoiceChannel
+            || peers.current.has(presence.id)
+            || user.id > presence.id
+          ) return;
+
+          void (async () => {
+            try {
+              const pc = makePeer(presence.id, presence.name ?? "Visitante");
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              post({ type: "offer", to: presence.id, channel: currentVoiceChannel, name: user.name, payload: offer });
+            } catch (error) {
+              console.error("Falha ao iniciar conexão WebRTC", error);
+              closePeer(presence.id);
+            }
+          })();
+        });
       })
       .on("broadcast", { event: "voice-signal" }, ({ payload }) => {
         void handleSignal(payload as Signal);
@@ -250,7 +344,7 @@ export default function Home() {
           realtime.current = channel;
           setRealtimeConnected(true);
           setRealtimeError("");
-          await channel.track({ ...user, onlineAt: new Date().toISOString() });
+          await channel.track({ ...user, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           setRealtimeConnected(false);
           setRealtimeError(error?.message ?? "Não foi possível conectar ao tempo real.");
@@ -286,8 +380,9 @@ export default function Home() {
       realtime.current = null;
       setRealtimeConnected(false);
       setOnlineUsers({});
+      setVoiceMembers({});
     };
-  }, [user, closePeer, makePeer, post]);
+  }, [user, closePeer, makePeer, playSound, post]);
 
   useEffect(() => {
     if (!voiceChannel || !localStream.current || !user) return;
@@ -299,10 +394,14 @@ export default function Home() {
     const values = new Uint8Array(analyser.frequencyBinCount);
     let frame = 0;
     let last = false;
+    let silentFrames = 0;
     const tick = () => {
       analyser.getByteFrequencyData(values);
       const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-      const active = !muted && average > 18;
+      const detected = !muted && average > 18;
+      if (detected) silentFrames = 0;
+      else silentFrames += 1;
+      const active = detected || (last && silentFrames < 12);
       setSpeaking(active);
       if (active !== last) {
         post({ type: "voice-state", channel: voiceChannel, name: user.name, muted, speaking: active });
@@ -312,12 +411,7 @@ export default function Home() {
     };
     tick();
     return () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
-  }, [voiceChannel, muted, user, post]);
-
-  useEffect(() => {
-    if (!voiceChannel || !user) return;
-    post({ type: "voice-state", channel: voiceChannel, name: user.name, muted, speaking });
-  }, [muted, voiceChannel, user, speaking, post]);
+  }, [voiceChannel, muted, user, post, audioTrackVersion]);
 
   const enter = (event: FormEvent) => {
     event.preventDefault();
@@ -337,10 +431,25 @@ export default function Home() {
     if (voiceChannel) leaveVoice();
     setMicError("");
     try {
-      localStream.current = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          ...(selectedAudioInput ? { deviceId: { exact: selectedAudioInput } } : {}),
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      localStream.current = stream;
+      const activeDeviceId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+      if (activeDeviceId) setSelectedAudioInput(activeDeviceId);
+      await refreshAudioInputs();
       voiceRef.current = channel;
       setVoiceChannel(channel);
-      setTimeout(() => post({ type: "announce", channel, name: userRef.current?.name, muted: false, speaking: false }), 120);
+      setAudioTrackVersion((version) => version + 1);
+      const current = userRef.current;
+      if (current) {
+        await realtime.current.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: channel, muted: false });
+      }
     } catch {
       setMicError("Não foi possível acessar o microfone. Verifique a permissão do navegador.");
     }
@@ -348,6 +457,10 @@ export default function Home() {
 
   const leaveVoice = () => {
     if (voiceRef.current) post({ type: "leave", channel: voiceRef.current });
+    const current = userRef.current;
+    if (current) {
+      void realtime.current?.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: null, muted: false });
+    }
     peers.current.forEach((peer) => peer.close());
     peers.current.clear();
     pendingIceCandidates.current.clear();
@@ -364,6 +477,43 @@ export default function Home() {
     const next = !muted;
     localStream.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
     setMuted(next);
+    const current = userRef.current;
+    if (current) {
+      void realtime.current?.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: next });
+      if (voiceRef.current) {
+        post({ type: "voice-state", channel: voiceRef.current, name: current.name, muted: next, speaking: next ? false : speaking });
+      }
+    }
+  };
+
+  const changeAudioInput = async (deviceId: string) => {
+    setSelectedAudioInput(deviceId);
+    if (!voiceRef.current) return;
+    setMicError("");
+    try {
+      const replacementStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: deviceId },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const replacementTrack = replacementStream.getAudioTracks()[0];
+      if (!replacementTrack) throw new Error("Microfone sem faixa de áudio");
+      await Promise.all(
+        [...peers.current.values()].map(async (peer) => {
+          const sender = peer.getSenders().find((item) => item.track?.kind === "audio");
+          if (sender) await sender.replaceTrack(replacementTrack);
+        }),
+      );
+      localStream.current?.getTracks().forEach((track) => track.stop());
+      replacementTrack.enabled = !muted;
+      localStream.current = replacementStream;
+      setAudioTrackVersion((version) => version + 1);
+    } catch {
+      setMicError("Não foi possível trocar o microfone.");
+    }
   };
 
   const sendMessage = async (event: FormEvent) => {
@@ -395,6 +545,7 @@ export default function Home() {
 
     const sent = messageFromRow(data);
     setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
+    playSound(sentMessageSound.current);
     setDraft("");
   };
 
@@ -402,6 +553,13 @@ export default function Home() {
   const currentChannel = channels.find((channel) => channel.id === activeChannel)!;
   const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.label;
   const onlineMembers = user ? [user, ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id)] : [];
+  const globalVoiceMembers = Object.values(voiceMembers)
+    .filter((member) => member.voiceChannel === "voice-geral")
+    .filter((member) => member.id !== user?.id || voiceChannel === "voice-geral")
+    .filter((member, index, all) => all.findIndex((candidate) => candidate.id === member.id) === index);
+  if (user && voiceChannel === "voice-geral" && !globalVoiceMembers.some((member) => member.id === user.id)) {
+    globalVoiceMembers.unshift({ ...user, onlineAt: new Date().toISOString(), voiceChannel, muted });
+  }
 
   if (!user) {
     return (
@@ -448,16 +606,22 @@ export default function Home() {
             <div className="section-title"><span>ÁUDIO EM TEMPO REAL</span></div>
             {voiceChannels.map((channel) => (
               <div key={channel.id}>
-                <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)}><Radio size={16} />{channel.label}{voiceChannel === channel.id && <b className="live-pill">CONECTADO</b>}</button>
-                {voiceChannel === channel.id && <div className="voice-list">
-                  <div className={`voice-user ${speaking ? "speaking" : ""}`}><Avatar name={user.name} color={user.color} small status={false} /><span>{user.name}</span>{muted && <MicOff size={12} />}</div>
-                  {Object.values(voicePeers).map((peer) => <div className={`voice-user ${peer.speaking ? "speaking" : ""}`} key={peer.id}><Avatar name={peer.name} color="#70a8ff" small status={false} /><span>{peer.name}</span>{peer.muted && <MicOff size={12} />}<RemoteAudio stream={peer.stream} muted={deafened} /></div>)}
+                <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)}><Radio size={16} />{channel.label}{voiceChannel === channel.id ? <b className="live-pill">CONECTADO</b> : globalVoiceMembers.length > 0 && <i>{globalVoiceMembers.length}</i>}</button>
+                {globalVoiceMembers.length > 0 && <div className="voice-list">
+                  {globalVoiceMembers.map((member) => {
+                    const isCurrentUser = member.id === user.id;
+                    const peer = voicePeers[member.id];
+                    const memberSpeaking = isCurrentUser ? speaking : !!peer?.speaking;
+                    const memberMuted = isCurrentUser ? muted : (peer?.muted ?? member.muted ?? false);
+                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} small status={false} /><span>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
+                  })}
                 </div>}
               </div>
             ))}
           </section>
         </nav>
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
+        {voiceChannel && audioInputs.length > 0 && <label className="device-picker"><Mic size={13} /><span>Entrada</span><select aria-label="Microfone de entrada" value={selectedAudioInput} onChange={(event) => void changeAudioInput(event.target.value)}>{audioInputs.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microfone ${index + 1}`}</option>)}</select></label>}
         {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC + Supabase</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
         <div className="user-panel">
           <Avatar name={user.name} color={user.color} />
