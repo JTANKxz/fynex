@@ -1,21 +1,21 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Copy, Gift, Hash, Headphones, Menu, MessageCircle, Mic, MicOff, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Copy, Eye, EyeOff, Gift, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { MessageRow } from "./lib/database.types";
 import { getSupabaseBrowserClient } from "./lib/supabase";
 
 type User = { id: string; name: string; color: string };
 type Message = { id: string; channel: string; author: string; authorId: string; color: string; content: string; time: string };
-type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream; screenStream?: MediaStream };
+type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream; screenStream?: MediaStream; screenSharing?: boolean };
 type PresenceUser = User & {
   onlineAt: string;
   voiceChannel?: string | null;
   muted?: boolean;
 };
 type Signal = {
-  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state" | "screen-state";
+  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state" | "screen-state" | "screen-watch";
   from: string;
   to?: string;
   channel?: string;
@@ -24,6 +24,7 @@ type Signal = {
   muted?: boolean;
   speaking?: boolean;
   screenSharing?: boolean;
+  watching?: boolean;
   payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
 
@@ -99,6 +100,10 @@ export default function Home() {
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
   const [screenSharing, setScreenSharing] = useState(false);
   const [localScreenPreview, setLocalScreenPreview] = useState<MediaStream | null>(null);
+  const [watchingScreenId, setWatchingScreenId] = useState<string | null>(null);
+  const [streamViewerOpen, setStreamViewerOpen] = useState(false);
+  const [streamFullscreen, setStreamFullscreen] = useState(false);
+  const [screenViewerCount, setScreenViewerCount] = useState(0);
   const [voicePeers, setVoicePeers] = useState<Record<string, VoicePeer>>({});
   const [voiceMembers, setVoiceMembers] = useState<Record<string, PresenceUser>>({});
   const [onlineUsers, setOnlineUsers] = useState<Record<string, PresenceUser>>({});
@@ -114,9 +119,12 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const voiceRef = useRef<string | null>(null);
+  const watchingScreenRef = useRef<string | null>(null);
   const userRef = useRef<User | null>(null);
   const localStream = useRef<MediaStream | null>(null);
   const localScreenStream = useRef<MediaStream | null>(null);
+  const screenWatchers = useRef<Set<string>>(new Set());
+  const screenStage = useRef<HTMLElement>(null);
   const peers = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingIceCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const realtime = useRef<RealtimeChannel | null>(null);
@@ -172,7 +180,13 @@ export default function Home() {
   }, []);
 
   useEffect(() => { voiceRef.current = voiceChannel; }, [voiceChannel]);
+  useEffect(() => { watchingScreenRef.current = watchingScreenId; }, [watchingScreenId]);
   useEffect(() => { userRef.current = user; }, [user]);
+  useEffect(() => {
+    const syncFullscreenState = () => setStreamFullscreen(document.fullscreenElement === screenStage.current);
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
   useEffect(() => {
     const container = messagesContainer.current;
     if (!container) return;
@@ -194,6 +208,8 @@ export default function Home() {
     peers.current.get(id)?.close();
     peers.current.delete(id);
     pendingIceCandidates.current.delete(id);
+    screenWatchers.current.delete(id);
+    setScreenViewerCount(screenWatchers.current.size);
     setVoicePeers((old) => {
       const next = { ...old };
       delete next[id];
@@ -205,7 +221,6 @@ export default function Home() {
     if (peers.current.has(id)) return peers.current.get(id)!;
     const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     localStream.current?.getTracks().forEach((track) => pc.addTrack(track, localStream.current!));
-    localScreenStream.current?.getVideoTracks().forEach((track) => pc.addTrack(track, localScreenStream.current!));
     pc.onicecandidate = (event) => {
       if (event.candidate && voiceRef.current) {
         post({ type: "ice", to: id, channel: voiceRef.current, payload: event.candidate.toJSON() });
@@ -214,7 +229,7 @@ export default function Home() {
     pc.ontrack = (event) => {
       const incomingStream = event.streams[0] ?? new MediaStream([event.track]);
       if (event.track.kind === "video") {
-        setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: incomingStream } }));
+        setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: incomingStream, screenSharing: true } }));
         event.track.onended = () => {
           setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: undefined } }));
         };
@@ -242,6 +257,53 @@ export default function Home() {
     }));
   }, [post]);
 
+  const renegotiatePeer = useCallback(async (id: string, peer: RTCPeerConnection) => {
+    const current = userRef.current;
+    const channel = voiceRef.current;
+    if (!current || !channel || peer.signalingState !== "stable") return;
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    post({ type: "offer", to: id, channel, name: current.name, payload: offer });
+  }, [post]);
+
+  const stopWatchingScreen = useCallback(() => {
+    const presenterId = watchingScreenId;
+    if (presenterId && voiceRef.current) {
+      post({ type: "screen-watch", to: presenterId, channel: voiceRef.current, watching: false });
+      setVoicePeers((old) => old[presenterId] ? { ...old, [presenterId]: { ...old[presenterId], screenStream: undefined } } : old);
+    }
+    watchingScreenRef.current = null;
+    setWatchingScreenId(null);
+    setStreamViewerOpen(false);
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+  }, [post, watchingScreenId]);
+
+  const watchScreen = useCallback((presenterId: string) => {
+    if (!voiceRef.current) {
+      setMicError("Entre na sala de voz para assistir à transmissão.");
+      return;
+    }
+    if (watchingScreenId && watchingScreenId !== presenterId) {
+      post({ type: "screen-watch", to: watchingScreenId, channel: voiceRef.current, watching: false });
+    }
+    setMicError("");
+    watchingScreenRef.current = presenterId;
+    setWatchingScreenId(presenterId);
+    setStreamViewerOpen(true);
+    post({ type: "screen-watch", to: presenterId, channel: voiceRef.current, watching: true });
+  }, [post, watchingScreenId]);
+
+  const toggleStreamFullscreen = useCallback(async () => {
+    const stage = screenStage.current;
+    if (!stage) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await stage.requestFullscreen();
+    } catch {
+      setMicError("O navegador não permitiu abrir a transmissão em tela cheia.");
+    }
+  }, []);
+
   const stopScreenShare = useCallback(async (renegotiate = true) => {
     const stream = localScreenStream.current;
     if (!stream) return;
@@ -252,8 +314,11 @@ export default function Home() {
       });
     });
     localScreenStream.current = null;
+    screenWatchers.current.clear();
+    setScreenViewerCount(0);
     setScreenSharing(false);
     setLocalScreenPreview(null);
+    setStreamViewerOpen(false);
     stream.getTracks().forEach((track) => track.stop());
     if (voiceRef.current) post({ type: "screen-state", channel: voiceRef.current, screenSharing: false });
     if (renegotiate) await renegotiatePeers();
@@ -285,15 +350,14 @@ export default function Home() {
       localScreenStream.current = stream;
       setScreenSharing(true);
       setLocalScreenPreview(stream);
-      peers.current.forEach((peer) => peer.addTrack(videoTrack, stream));
+      setStreamViewerOpen(true);
       videoTrack.onended = () => { void stopScreenShare(); };
       post({ type: "screen-state", channel: voiceRef.current, screenSharing: true });
-      await renegotiatePeers();
     } catch (error) {
       if (error instanceof DOMException && error.name === "NotAllowedError") return;
       setMicError("Não foi possível iniciar a transmissão de tela.");
     }
-  }, [post, renegotiatePeers, stopScreenShare]);
+  }, [post, stopScreenShare]);
 
   const refreshAudioInputs = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -341,14 +405,40 @@ export default function Home() {
             ...old,
             [data.from]: {
               ...(old[data.from] ?? { id: data.from, name: data.name ?? "Visitante", muted: false, speaking: false }),
+              name: data.name ?? old[data.from]?.name ?? "Visitante",
+              screenSharing: !!data.screenSharing,
               screenStream: data.screenSharing ? old[data.from]?.screenStream : undefined,
             },
           }));
+          if (!data.screenSharing && watchingScreenRef.current === data.from) {
+            watchingScreenRef.current = null;
+            setWatchingScreenId(null);
+            setStreamViewerOpen(false);
+            if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+          }
+        } else if (data.type === "screen-watch") {
+          const screenStream = localScreenStream.current;
+          if (!screenStream) return;
+          const pc = makePeer(data.from, data.name ?? "Visitante");
+          const videoTrack = screenStream.getVideoTracks()[0];
+          if (data.watching && videoTrack) {
+            const alreadySending = pc.getSenders().some((sender) => sender.track?.id === videoTrack.id);
+            if (!alreadySending) pc.addTrack(videoTrack, screenStream);
+            screenWatchers.current.add(data.from);
+          } else {
+            pc.getSenders().filter((sender) => sender.track?.kind === "video").forEach((sender) => pc.removeTrack(sender));
+            screenWatchers.current.delete(data.from);
+          }
+          setScreenViewerCount(screenWatchers.current.size);
+          await renegotiatePeer(data.from, pc);
         } else if (data.type === "announce") {
           const pc = makePeer(data.from, data.name ?? "Visitante");
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           post({ type: "offer", to: data.from, channel: voiceRef.current, name: me.name, payload: offer });
+          if (localScreenStream.current) {
+            post({ type: "screen-state", to: data.from, channel: voiceRef.current, name: me.name, screenSharing: true });
+          }
         } else if (data.type === "offer") {
           const pc = makePeer(data.from, data.name ?? "Visitante");
           await pc.setRemoteDescription(data.payload as RTCSessionDescriptionInit);
@@ -493,7 +583,7 @@ export default function Home() {
       setOnlineUsers({});
       setVoiceMembers({});
     };
-  }, [user, closePeer, makePeer, playSound, post]);
+  }, [user, closePeer, makePeer, playSound, post, renegotiatePeer]);
 
   useEffect(() => {
     if (!voiceChannel || !localStream.current || !user) return;
@@ -567,6 +657,7 @@ export default function Home() {
   };
 
   const leaveVoice = () => {
+    stopWatchingScreen();
     void stopScreenShare(false);
     if (voiceRef.current) post({ type: "leave", channel: voiceRef.current });
     const current = userRef.current;
@@ -676,9 +767,10 @@ export default function Home() {
   if (user && voiceChannel === "voice-geral" && !globalVoiceMembers.some((member) => member.id === user.id)) {
     globalVoiceMembers.unshift({ ...user, onlineAt: new Date().toISOString(), voiceChannel, muted });
   }
-  const remoteScreenPeer = Object.values(voicePeers).find((peer) => peer.screenStream);
-  const activeScreenStream = screenSharing ? localScreenPreview : remoteScreenPeer?.screenStream;
-  const screenPresenter = screenSharing ? user?.name : remoteScreenPeer?.name;
+  const remoteScreenPeer = Object.values(voicePeers).find((peer) => peer.screenSharing);
+  const watchedScreenPeer = watchingScreenId ? voicePeers[watchingScreenId] : undefined;
+  const activeScreenStream = screenSharing ? localScreenPreview : watchedScreenPeer?.screenStream;
+  const screenPresenter = screenSharing ? user?.name : watchedScreenPeer?.name ?? remoteScreenPeer?.name;
 
   if (!user) {
     return (
@@ -762,9 +854,35 @@ export default function Home() {
           <div className="header-actions"><div className="header-online"><span />{onlineMembers.length} online</div><button aria-label="Notificações"><Bell size={16} /></button><label><Search size={14} /><input placeholder="Buscar no chat" /></label></div>
         </header>
 
-        {activeScreenStream && <section className="screen-stage">
-          <header><div><MonitorUp size={15} /><span><strong>{screenPresenter}</strong> está compartilhando a tela</span></div><div><b>720P · 30 FPS</b>{screenSharing && <button onClick={() => void stopScreenShare()}><Square size={12} /> Parar</button>}</div></header>
-          <div className="screen-player"><ScreenVideo stream={activeScreenStream} /></div>
+        {(screenSharing || remoteScreenPeer) && !streamViewerOpen && <section className="screen-invite">
+          <div className="screen-invite-preview"><MonitorUp size={25} /></div>
+          <div><span>TRANSMISSÃO AO VIVO</span><strong>{screenSharing ? "Sua tela está sendo transmitida" : `${remoteScreenPeer?.name} está compartilhando a tela`}</strong><small>720p · 30 FPS · conexão ativada somente para espectadores</small></div>
+          <button onClick={() => {
+            if (screenSharing || watchingScreenId === remoteScreenPeer?.id) {
+              setStreamViewerOpen(true);
+            } else if (remoteScreenPeer) {
+              watchScreen(remoteScreenPeer.id);
+            }
+          }}><Eye size={15} /> {watchingScreenId || screenSharing ? "Abrir transmissão" : "Assistir transmissão"}</button>
+        </section>}
+
+        {streamViewerOpen && (screenSharing || watchingScreenId) && <section className="screen-stage" ref={screenStage}>
+          <header className="screen-toolbar">
+            <div><MonitorUp size={16} /><span><strong>{screenPresenter ?? "Transmissão"}</strong><small>{screenSharing ? `${screenViewerCount} ${screenViewerCount === 1 ? "espectador" : "espectadores"}` : activeScreenStream ? "Ao vivo" : "Conectando ao vídeo..."}</small></span></div>
+            <div><b>720P · 30 FPS</b><button onClick={() => setStreamViewerOpen(false)} aria-label="Minimizar transmissão"><Minimize2 size={15} /></button><button onClick={() => screenSharing ? void stopScreenShare() : stopWatchingScreen()} aria-label={screenSharing ? "Encerrar transmissão" : "Sair da transmissão"}><X size={16} /></button></div>
+          </header>
+          <div className="screen-player">
+            {activeScreenStream ? <ScreenVideo stream={activeScreenStream} /> : <div className="screen-loading"><span /><strong>Conectando à transmissão</strong><small>O vídeo começa assim que a conexão direta estiver pronta.</small></div>}
+          </div>
+          <footer className="screen-controls">
+            <div><span className="live-dot" /> AO VIVO</div>
+            <div>
+              <button onClick={() => void toggleStreamFullscreen()} aria-label={streamFullscreen ? "Sair da tela cheia" : "Abrir em tela cheia"}>{streamFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}<span>{streamFullscreen ? "Sair da tela cheia" : "Tela cheia"}</span></button>
+              {!screenSharing && <button onClick={stopWatchingScreen} className="leave-stream"><EyeOff size={17} /><span>Sair da transmissão</span></button>}
+              {screenSharing && <button onClick={() => void stopScreenShare()} className="leave-stream"><Square size={16} /><span>Encerrar transmissão</span></button>}
+            </div>
+            <small>{screenSharing ? `Enviando vídeo para ${screenViewerCount}` : "Recebendo vídeo enquanto você assiste"}</small>
+          </footer>
         </section>}
 
         <div className="messages" ref={messagesContainer}>
