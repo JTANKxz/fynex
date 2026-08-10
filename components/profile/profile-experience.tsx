@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
-import { CalendarDays, Edit3, Palette, ShieldCheck, Sparkles, X } from "lucide-react";
+import { CalendarDays, Edit3, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ProfileForm } from "@/components/profile/profile-form";
 import { ProfileMediaEditor } from "@/components/profile/profile-media-editor";
@@ -29,18 +29,16 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
   return <>
     <section className="profile-stage" style={style}>
       <div className="profile-ambient" />
-      <div className={`profile-cover ${profile.banner_url ? "has-image" : ""}`} style={profile.banner_url ? { backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,.08), rgba(0,0,0,.45)), url("${profile.banner_url}")` } : undefined}><span>FYNEX IDENTITY</span><Sparkles size={22} /></div>
+      <div className={`profile-cover ${profile.banner_url ? "has-image" : ""}`} style={profile.banner_url ? { backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,.08), rgba(0,0,0,.45)), url("${profile.banner_url}")` } : undefined} />
       <div className="profile-identity-row">
         <div className={`profile-avatar-large ${profile.avatar_url ? "has-image" : ""}`} style={profile.avatar_url ? { backgroundImage: `url("${profile.avatar_url}")` } : undefined}>{profile.avatar_url ? null : initials}</div>
-        <div><span className="profile-status"><i /> DISPONÍVEL</span><h1>{profile.display_name}</h1><strong>@{profile.username}</strong></div>
+        <div><h1>{profile.display_name}</h1><strong>@{profile.username}</strong></div>
         <button className="profile-edit-button" onClick={() => setEditing(true)}><Edit3 size={16} />Editar perfil</button>
       </div>
       <div className="profile-content-grid">
         <article className="profile-about"><span>SOBRE MIM</span><p>{profile.bio || "Este espaço está esperando uma descrição que tenha a sua cara."}</p></article>
         <aside className="profile-details">
           <div><CalendarDays size={17} /><span><small>MEMBRO DESDE</small>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(profile.created_at))}</span></div>
-          <div><Palette size={17} /><span><small>COR DO CARD</small><b className="profile-color-dot" />{profile.accent_color.toUpperCase()}</span></div>
-          <div><ShieldCheck size={17} /><span><small>CONTA</small>Perfil autenticado</span></div>
         </aside>
       </div>
     </section>

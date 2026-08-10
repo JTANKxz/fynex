@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import { Camera, ImagePlus, LoaderCircle, Trash2, Upload, X } from "lucide-react";
 import { removeProfileMediaAction, saveProfileMediaAction } from "@/app/actions/profile-media";
@@ -34,8 +34,8 @@ function uploadToImageKit(file: Blob, token: UploadToken, onProgress: (progress:
 }
 
 export function ProfileMediaEditor({ profile, onChanged }: { profile: Profile; onChanged: () => void }) {
-  const avatarInput = useRef<HTMLInputElement>(null);
-  const bannerInput = useRef<HTMLInputElement>(null);
+  const avatarInputId = useId();
+  const bannerInputId = useId();
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [crop, setCrop] = useState<Point>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -108,7 +108,7 @@ export function ProfileMediaEditor({ profile, onChanged }: { profile: Profile; o
   if (editor) return <section className="profile-media-crop">
     <header><div><strong>Enquadrar {editor.kind === "avatar" ? "foto" : "banner"}</strong><small>Arraste a imagem e use o controle para ajustar.</small></div><button type="button" onClick={cancelCrop} aria-label="Cancelar recorte"><X size={16} /></button></header>
     <div className={`crop-stage ${editor.kind === "avatar" ? "avatar-crop" : "banner-crop"}`}>
-      <Cropper image={editor.source} crop={crop} zoom={zoom} aspect={editor.kind === "avatar" ? 1 : 16 / 5} cropShape={editor.kind === "avatar" ? "round" : "rect"} showGrid={editor.kind === "banner"} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_, area) => setPixels(area)} />
+      <Cropper image={editor.source} crop={crop} zoom={zoom} aspect={editor.kind === "avatar" ? 1 : 16 / 5} cropShape={editor.kind === "avatar" ? "round" : "rect"} showGrid={editor.kind === "banner"} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_, area) => setPixels(area)} onCropAreaChange={(_, area) => setPixels(area)} />
     </div>
     <label className="zoom-control">Zoom<input type="range" min={1} max={3} step={.05} value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
     {busy && <div className="upload-progress"><span style={{ width: `${progress}%` }} /><small>{progress < 10 ? "Preparando imagem…" : `Enviando… ${progress}%`}</small></div>}
@@ -119,16 +119,16 @@ export function ProfileMediaEditor({ profile, onChanged }: { profile: Profile; o
     <div className="profile-media-card banner-card">
       <div className="media-preview" style={profile.banner_url ? { backgroundImage: `url("${profile.banner_url}")` } : { background: profile.accent_color }}><ImagePlus size={21} /></div>
       <div><strong>Banner do perfil</strong><small>Formato panorâmico · JPG, PNG ou WebP</small></div>
-      <button type="button" onClick={() => bannerInput.current?.click()} disabled={!!busy}><ImagePlus size={14} />{profile.banner_url ? "Trocar" : "Adicionar"}</button>
+      <label className="media-select-button" htmlFor={bannerInputId} aria-disabled={!!busy}><ImagePlus size={14} />{profile.banner_url ? "Trocar" : "Adicionar"}</label>
       {profile.banner_url && <button type="button" className="remove-media" onClick={() => void removeImage("banner")} disabled={!!busy} aria-label="Remover banner">{busy === "banner" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button>}
-      <input ref={bannerInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => { chooseFile("banner", event.target.files?.[0]); event.target.value = ""; }} />
+      <input id={bannerInputId} className="media-file-input" type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy} onChange={(event) => { chooseFile("banner", event.target.files?.[0]); event.target.value = ""; }} />
     </div>
     <div className="profile-media-card avatar-card">
       <div className="media-preview" style={profile.avatar_url ? { backgroundImage: `url("${profile.avatar_url}")` } : { background: profile.accent_color }}><Camera size={19} /></div>
       <div><strong>Foto de perfil</strong><small>Recorte quadrado · JPG, PNG ou WebP</small></div>
-      <button type="button" onClick={() => avatarInput.current?.click()} disabled={!!busy}><Camera size={14} />{profile.avatar_url ? "Trocar" : "Adicionar"}</button>
+      <label className="media-select-button" htmlFor={avatarInputId} aria-disabled={!!busy}><Camera size={14} />{profile.avatar_url ? "Trocar" : "Adicionar"}</label>
       {profile.avatar_url && <button type="button" className="remove-media" onClick={() => void removeImage("avatar")} disabled={!!busy} aria-label="Remover foto de perfil">{busy === "avatar" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button>}
-      <input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => { chooseFile("avatar", event.target.files?.[0]); event.target.value = ""; }} />
+      <input id={avatarInputId} className="media-file-input" type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy} onChange={(event) => { chooseFile("avatar", event.target.files?.[0]); event.target.value = ""; }} />
     </div>
     {message && <p className={`form-message ${message.type}`}>{message.text}</p>}
   </section>;
