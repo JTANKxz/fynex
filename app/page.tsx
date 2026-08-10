@@ -1,100 +1,27 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Bell, Copy, Eye, EyeOff, Gift, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { MessageRow } from "./lib/database.types";
-import { getSupabaseBrowserClient } from "./lib/supabase";
-
-type User = { id: string; name: string; color: string };
-type Message = { id: string; channel: string; author: string; authorId: string; color: string; content: string; time: string };
-type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream; screenStream?: MediaStream; screenSharing?: boolean };
-type PresenceUser = User & {
-  onlineAt: string;
-  voiceChannel?: string | null;
-  muted?: boolean;
-};
-type Signal = {
-  type: "announce" | "offer" | "answer" | "ice" | "leave" | "voice-state" | "screen-state" | "screen-watch";
-  from: string;
-  to?: string;
-  channel?: string;
-  name?: string;
-  color?: string;
-  muted?: boolean;
-  speaking?: boolean;
-  screenSharing?: boolean;
-  watching?: boolean;
-  payload?: RTCSessionDescriptionInit | RTCIceCandidateInit;
-};
-
-const colors = ["#8b7cff", "#44d7b6", "#ffad66", "#ff7597", "#70a8ff"];
-const channels = [
-  { id: "geral", label: "Chat global", icon: "#", description: "Uma conversa aberta para todo mundo que estiver online" },
-];
-const voiceChannels = [
-  { id: "voice-geral", label: "Voz global" },
-];
+import type { Message as MessageRow } from "@/lib/supabase/database.types";
+import { createClient } from "@/lib/supabase/client";
+import { CreateCommunityModal } from "@/components/community/create-community-modal";
+import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
+import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
 
 const seedMessages: Message[] = [];
 
-function initials(name: string) {
-  return name.trim().slice(0, 2).toUpperCase();
-}
-
-function messageFromRow(row: MessageRow): Message {
-  return {
-    id: row.id,
-    channel: row.channel,
-    author: row.username,
-    authorId: row.session_id,
-    color: row.color,
-    content: row.content,
-    time: new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(row.created_at)),
-  };
-}
-
-function Avatar({ name, color, status = true, small = false }: { name: string; color: string; status?: boolean; small?: boolean }) {
-  return (
-    <span className={`avatar ${small ? "avatar-small" : ""}`} style={{ background: color }}>
-      {initials(name)}
-      {status && <span className="status-dot" />}
-    </span>
-  );
-}
-
-function RemoteAudio({ stream, muted }: { stream?: MediaStream; muted: boolean }) {
-  const ref = useRef<HTMLAudioElement>(null);
-  useEffect(() => {
-    const audio = ref.current;
-    if (!audio) return;
-    audio.srcObject = stream ?? null;
-    if (stream && !muted) void audio.play().catch(() => undefined);
-  }, [stream, muted]);
-  return <audio ref={ref} autoPlay playsInline muted={muted} />;
-}
-
-function ScreenVideo({ stream, muted = true }: { stream: MediaStream; muted?: boolean }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    const video = ref.current;
-    if (!video) return;
-    video.srcObject = stream;
-    void video.play().catch(() => undefined);
-    return () => { video.srcObject = null; };
-  }, [stream]);
-  return <video ref={ref} autoPlay playsInline muted={muted} />;
-}
-
 export default function Home() {
+  const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
   const [user, setUser] = useState<User | null>(null);
-  const [name, setName] = useState("");
-  const [activeChannel, setActiveChannel] = useState("geral");
+  const [authLoading, setAuthLoading] = useState(true);
+  const [communities, setCommunities] = useState<CommunitySpace[]>([]);
+  const [communityChannels, setCommunityChannels] = useState<CommunityChannel[]>([]);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  const [activeChannel, setActiveChannel] = useState<string | null>(null);
+  const [createCommunityOpen, setCreateCommunityOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
@@ -139,6 +66,38 @@ export default function Home() {
     void sound.play().catch(() => undefined);
   }, []);
 
+  const loadWorkspace = useCallback(async (preferredCommunityId?: string) => {
+    const { data: spaces, error } = await supabase.from("communities").select("*").order("created_at", { ascending: true });
+    if (error) {
+      setRealtimeError("Não foi possível carregar suas comunidades.");
+      return;
+    }
+
+    const available = spaces ?? [];
+    setCommunities(available);
+    const selected = available.find((space) => space.id === preferredCommunityId)
+      ?? available.find((space) => space.id === activeCommunityId)
+      ?? available[0];
+
+    if (!selected) {
+      setCommunityChannels([]);
+      setActiveCommunityId(null);
+      setActiveChannel(null);
+      return;
+    }
+
+    const { data: loadedChannels, error: channelError } = await supabase.from("channels").select("*").eq("community_id", selected.id).order("position").order("created_at");
+    if (channelError) {
+      setRealtimeError("Não foi possível carregar os canais.");
+      return;
+    }
+
+    const nextChannels = loadedChannels ?? [];
+    setActiveCommunityId(selected.id);
+    setCommunityChannels(nextChannels);
+    setActiveChannel(nextChannels.find((channel) => channel.type === "text")?.id ?? null);
+  }, [activeCommunityId, supabase]);
+
   useEffect(() => {
     const received = new Audio("/sounds/message-received.mp3");
     const sent = new Audio("/sounds/message-sent.mp3");
@@ -167,17 +126,22 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => {
+    void (async () => {
+      sessionStorage.removeItem("fynex:user");
+      sessionStorage.removeItem("nexo:user");
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) { router.replace("/login"); return; }
+      const { data: profile } = await supabase.from("profiles").select("id, display_name, accent_color").eq("id", authUser.id).single();
       if (cancelled) return;
-      const saved = sessionStorage.getItem("fynex:user") ?? sessionStorage.getItem("nexo:user");
-      if (saved) {
-        const parsed = JSON.parse(saved) as User;
-        setUser(parsed);
-        userRef.current = parsed;
-      }
-    });
+      if (!profile) { await supabase.auth.signOut(); router.replace("/login?error=profile"); return; }
+      const current = { id: profile.id, name: profile.display_name, color: profile.accent_color };
+      userRef.current = current;
+      setUser(current);
+      await loadWorkspace();
+      setAuthLoading(false);
+    })();
     return () => { cancelled = true; };
-  }, []);
+  }, [loadWorkspace, router, supabase]);
 
   useEffect(() => { voiceRef.current = voiceChannel; }, [voiceChannel]);
   useEffect(() => { watchingScreenRef.current = watchingScreenId; }, [watchingScreenId]);
@@ -376,23 +340,14 @@ export default function Home() {
   }, [refreshAudioInputs]);
 
   useEffect(() => {
-    if (!user) return;
-    const supabase = getSupabaseBrowserClient();
+    if (!user || !activeCommunityId) return;
+    // The authenticated browser client is created once for this page.
     if (!supabase) {
       queueMicrotask(() => setRealtimeError("Supabase não configurado neste ambiente."));
       return;
     }
 
     let disposed = false;
-    const addMessage = (row: MessageRow) => {
-      const incoming = messageFromRow(row);
-      setMessages((old) => old.some((item) => item.id === incoming.id)
-        ? old
-        : [...old, incoming].slice(-150));
-      const wasSentInThisTab = ownMessageIds.current.delete(row.id);
-      if (!wasSentInThisTab && row.session_id !== user.id) playSound(receivedMessageSound.current);
-    };
-
     const handleSignal = async (data: Signal) => {
       const me = userRef.current;
       if (!me) return;
@@ -476,7 +431,7 @@ export default function Home() {
     };
 
     const channel = supabase
-      .channel("fynex:global", {
+      .channel(`fynex:community:${activeCommunityId}`, {
         config: {
           presence: { key: user.id },
           broadcast: { self: false, ack: false },
@@ -532,11 +487,6 @@ export default function Home() {
       .on("broadcast", { event: "voice-signal" }, ({ payload }) => {
         void handleSignal(payload as Signal);
       })
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: "channel=eq.geral" },
-        ({ new: row }) => addMessage(row as MessageRow),
-      )
       .subscribe(async (status, error) => {
         if (disposed) return;
         if (status === "SUBSCRIBED") {
@@ -548,21 +498,6 @@ export default function Home() {
           setRealtimeConnected(false);
           setRealtimeError(error?.message ?? "Não foi possível conectar ao tempo real.");
         }
-      });
-
-    void supabase
-      .from("messages")
-      .select("id, channel, session_id, username, color, content, created_at")
-      .eq("channel", "geral")
-      .order("created_at", { ascending: false })
-      .limit(150)
-      .then(({ data, error }) => {
-        if (disposed) return;
-        if (error) {
-          setRealtimeError("Não foi possível carregar as mensagens.");
-          return;
-        }
-        setMessages((data ?? []).reverse().map(messageFromRow));
       });
 
     return () => {
@@ -583,7 +518,49 @@ export default function Home() {
       setOnlineUsers({});
       setVoiceMembers({});
     };
-  }, [user, closePeer, makePeer, playSound, post, renegotiatePeer]);
+  }, [activeCommunityId, user, closePeer, makePeer, post, renegotiatePeer, supabase]);
+
+  useEffect(() => {
+    if (!user || !activeChannel) return;
+
+    let disposed = false;
+    const addMessage = async (row: MessageRow) => {
+      const { data: author } = await supabase.from("profiles").select("display_name, accent_color").eq("id", row.author_id).single();
+      if (!author || disposed) return;
+      const incoming = messageFromRow(row, author);
+      setMessages((old) => old.some((item) => item.id === incoming.id) ? old : [...old, incoming].slice(-150));
+      const wasSentInThisTab = ownMessageIds.current.delete(row.id);
+      if (!wasSentInThisTab && row.author_id !== user.id) playSound(receivedMessageSound.current);
+    };
+
+    const messageChannel = supabase
+      .channel(`fynex:messages:${activeChannel}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `channel_id=eq.${activeChannel}` }, ({ new: row }) => { void addMessage(row as MessageRow); })
+      .subscribe();
+
+    void supabase.from("messages")
+      .select("id, channel_id, author_id, content, created_at, edited_at, profiles!messages_author_id_fkey(display_name, accent_color)")
+      .eq("channel_id", activeChannel)
+      .order("created_at", { ascending: false })
+      .limit(150)
+      .then(({ data, error }) => {
+        if (disposed) return;
+        if (error) {
+          setRealtimeError("Não foi possível carregar as mensagens.");
+          return;
+        }
+        const loaded = (data ?? []).reverse().flatMap((row) => {
+          const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+          return profile ? [messageFromRow(row, profile)] : [];
+        });
+        setMessages(loaded);
+      });
+
+    return () => {
+      disposed = true;
+      void supabase.removeChannel(messageChannel);
+    };
+  }, [activeChannel, playSound, supabase, user]);
 
   useEffect(() => {
     if (!voiceChannel || !localStream.current || !user) return;
@@ -613,15 +590,6 @@ export default function Home() {
     tick();
     return () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
   }, [voiceChannel, muted, user, post, audioTrackVersion]);
-
-  const enter = (event: FormEvent) => {
-    event.preventDefault();
-    const clean = name.trim().slice(0, 24);
-    if (!clean) return;
-    const created: User = { id: crypto.randomUUID(), name: clean, color: colors[Math.floor(Math.random() * colors.length)] };
-    sessionStorage.setItem("fynex:user", JSON.stringify(created));
-    setUser(created);
-  };
 
   const joinVoice = async (channel: string) => {
     if (voiceChannel === channel) return;
@@ -722,8 +690,7 @@ export default function Home() {
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     const content = draft.trim().slice(0, 2000);
-    const supabase = getSupabaseBrowserClient();
-    if (!content || !user || !supabase || sending) return;
+    if (!content || !user || !activeChannel || sending) return;
 
     setSending(true);
     setRealtimeError("");
@@ -734,13 +701,11 @@ export default function Home() {
       .from("messages")
       .insert({
         id: messageId,
-        channel: activeChannel,
-        session_id: user.id,
-        username: user.name,
-        color: user.color,
+        channel_id: activeChannel,
+        author_id: user.id,
         content,
       })
-      .select("id, channel, session_id, username, color, content, created_at")
+      .select("id, channel_id, author_id, content, created_at, edited_at")
       .single();
 
     setSending(false);
@@ -750,56 +715,54 @@ export default function Home() {
       return;
     }
 
-    const sent = messageFromRow(data);
+    const sent = messageFromRow(data, { display_name: user.name, accent_color: user.color });
     setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
     playSound(sentMessageSound.current);
     setDraft("");
   };
 
-  const visibleMessages = useMemo(() => messages.filter((message) => message.channel === activeChannel), [messages, activeChannel]);
-  const currentChannel = channels.find((channel) => channel.id === activeChannel)!;
-  const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.label;
+  const activeCommunity = communities.find((community) => community.id === activeCommunityId);
+  const textChannels = communityChannels.filter((channel) => channel.type === "text");
+  const voiceChannels = communityChannels.filter((channel) => channel.type === "voice");
+  const visibleMessages = useMemo(() => messages.filter((message) => message.channelId === activeChannel), [messages, activeChannel]);
+  const currentChannel = textChannels.find((channel) => channel.id === activeChannel) ?? textChannels[0];
+  const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.name;
   const onlineMembers = user ? [user, ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id)] : [];
-  const globalVoiceMembers = Object.values(voiceMembers)
-    .filter((member) => member.voiceChannel === "voice-geral")
-    .filter((member) => member.id !== user?.id || voiceChannel === "voice-geral")
-    .filter((member, index, all) => all.findIndex((candidate) => candidate.id === member.id) === index);
-  if (user && voiceChannel === "voice-geral" && !globalVoiceMembers.some((member) => member.id === user.id)) {
-    globalVoiceMembers.unshift({ ...user, onlineAt: new Date().toISOString(), voiceChannel, muted });
-  }
+  const getVoiceMembers = (channelId: string) => {
+    const members = Object.values(voiceMembers)
+      .filter((member) => member.voiceChannel === channelId)
+      .filter((member, index, all) => all.findIndex((candidate) => candidate.id === member.id) === index);
+    if (user && voiceChannel === channelId && !members.some((member) => member.id === user.id)) members.unshift({ ...user, onlineAt: new Date().toISOString(), voiceChannel, muted });
+    return members;
+  };
+  const currentVoiceMembers = voiceChannel ? getVoiceMembers(voiceChannel) : [];
   const remoteScreenPeer = Object.values(voicePeers).find((peer) => peer.screenSharing);
   const watchedScreenPeer = watchingScreenId ? voicePeers[watchingScreenId] : undefined;
   const activeScreenStream = screenSharing ? localScreenPreview : watchedScreenPeer?.screenStream;
   const screenPresenter = screenSharing ? user?.name : watchedScreenPeer?.name ?? remoteScreenPeer?.name;
 
-  if (!user) {
-    return (
-      <main className="welcome-shell">
-        <div className="welcome-glow glow-one" /><div className="welcome-glow glow-two" />
-        <section className="welcome-card">
-          <div className="brand-mark large">F</div>
-          <span className="eyebrow">FYNEX · ACESSO ANTECIPADO</span>
-          <h1>Encontre seu ritmo.<br /><span>Fique por perto.</span></h1>
-          <p>Um lugar mais leve para conversar, criar e ouvir quem importa. Entre sem conta e comece agora.</p>
-          <form onSubmit={enter} className="name-form">
-            <label htmlFor="display-name">Como devemos chamar você?</label>
-            <div className="name-row">
-              <input id="display-name" autoFocus maxLength={24} value={name} onChange={(event) => setName(event.target.value)} placeholder="Digite seu nome" />
-              <button type="submit" disabled={!name.trim()} aria-label="Entrar no FYNEX">→</button>
-            </div>
-          </form>
-          <div className="session-note"><span>◷</span><div><strong>Sessão temporária</strong><small>Seu nome desaparece quando você fecha esta aba.</small></div></div>
-        </section>
-        <footer className="welcome-footer">FYNEX LAB · Seus dados ficam neste navegador</footer>
-      </main>
-    );
-  }
+  const handleCommunityCreated = async (communityId: string) => {
+    setCreateCommunityOpen(false);
+    if (voiceChannel) leaveVoice();
+    await loadWorkspace(communityId);
+  };
+
+  const selectCommunity = async (communityId: string) => {
+    if (communityId === activeCommunityId) return;
+    if (voiceChannel) leaveVoice();
+    await loadWorkspace(communityId);
+  };
+
+  if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}<CreateCommunityModal open={createCommunityOpen} onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} /></main>;
 
   return (
     <main className="app-shell">
       <aside className="server-rail" aria-label="Barra principal">
-        <button className="server active" aria-label="FYNEX"><span>FYNEX</span><i /></button>
-        <div className="global-badge"><Radio size={14} /><span>Espaço global</span></div>
+        <button className="server brand-server" aria-label="Início do FYNEX"><span>FYNEX</span></button>
+        <div className="rail-divider" />
+        {communities.map((community) => <button key={community.id} className={`server community-server ${community.id === activeCommunityId ? "active" : ""}`} style={{ background: community.id === activeCommunityId ? community.accent_color : undefined }} onClick={() => void selectCommunity(community.id)} aria-label={community.name} title={community.name}><span>{community.name.slice(0, 2).toUpperCase()}</span><i /></button>)}
+        <button className="server add-server" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade" title="Criar comunidade"><Plus size={18} /></button>
+        <div className="community-badge"><Radio size={14} /><span>{activeCommunity.name}</span></div>
         <div className="rail-spacer" />
         <div className="top-online"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></div>
         <Avatar name={user.name} color={user.color} small />
@@ -808,20 +771,21 @@ export default function Home() {
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <header className="community-header"><div><span className="community-dot">F</span><strong>FYNEX Global</strong></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></header>
+        <header className="community-header"><div><span className="community-dot" style={{ background: activeCommunity.accent_color }}>{activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></header>
         <div className="invite-card"><Copy size={15} /><div><strong>Convide alguém</strong><small>Abra o link em outra aba</small></div><button onClick={() => navigator.clipboard?.writeText(location.href)}>Copiar</button></div>
         <nav className="channel-nav">
           <section>
             <div className="section-title"><span>CONVERSA</span></div>
-            {channels.map((channel) => <button key={channel.id} className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.label}<i>{onlineMembers.length}</i></button>)}
+            {textChannels.map((channel) => <button key={channel.id} className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.name}<i>{onlineMembers.length}</i></button>)}
           </section>
           <section className="voice-section">
             <div className="section-title"><span>ÁUDIO EM TEMPO REAL</span></div>
-            {voiceChannels.map((channel) => (
-              <div key={channel.id}>
-                <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)}><Radio size={16} />{channel.label}{voiceChannel === channel.id ? <b className="live-pill">CONECTADO</b> : globalVoiceMembers.length > 0 && <i>{globalVoiceMembers.length}</i>}</button>
-                {globalVoiceMembers.length > 0 && <div className="voice-list">
-                  {globalVoiceMembers.map((member) => {
+            {voiceChannels.map((channel) => {
+              const channelMembers = getVoiceMembers(channel.id);
+              return <div key={channel.id}>
+                <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)}><Radio size={16} />{channel.name}{voiceChannel === channel.id ? <b className="live-pill">CONECTADO</b> : channelMembers.length > 0 && <i>{channelMembers.length}</i>}</button>
+                {channelMembers.length > 0 && <div className="voice-list">
+                  {channelMembers.map((member) => {
                     const isCurrentUser = member.id === user.id;
                     const peer = voicePeers[member.id];
                     const memberSpeaking = isCurrentUser ? speaking : !!peer?.speaking;
@@ -829,8 +793,8 @@ export default function Home() {
                     return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} small status={false} /><span>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
                   })}
                 </div>}
-              </div>
-            ))}
+              </div>;
+            })}
           </section>
         </nav>
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
@@ -842,15 +806,15 @@ export default function Home() {
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
           <button className={screenSharing ? "control-on screen-on" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()} aria-label={screenSharing ? "Parar transmissão de tela" : "Compartilhar tela"}>{screenSharing ? <Square size={14} /> : <MonitorUp size={15} />}</button>
-          <button aria-label="Configurações"><Settings size={15} /></button>
+          <button aria-label="Configurações do perfil" onClick={() => router.push("/profile")}><Settings size={15} /></button>
         </div>
       </aside>
 
       <section className="chat-panel">
         <header className="chat-header">
           <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Abrir canais"><Menu size={18} /></button>
-          <span className="hash"><Hash size={16} /></span><strong>{currentChannel.label}</strong><i />
-          <p>{currentChannel.description}</p>
+          <span className="hash"><Hash size={16} /></span><strong>{currentChannel.name}</strong><i />
+          <p>{activeCommunity.description || `Conversas em ${activeCommunity.name}`}</p>
           <div className="header-actions"><div className="header-online"><span />{onlineMembers.length} online</div><button aria-label="Notificações"><Bell size={16} /></button><label><Search size={14} /><input placeholder="Buscar no chat" /></label></div>
         </header>
 
@@ -886,7 +850,7 @@ export default function Home() {
         </section>}
 
         <div className="messages" ref={messagesContainer}>
-          <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Chat global</h2><p>Todo mundo conversa aqui em tempo real. Teste em outro navegador ou celular.</p></div>
+          <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Bem-vindo a #{currentChannel.name}</h2><p>Este é o começo deste canal em {activeCommunity.name}.</p></div>
           {visibleMessages.map((message, index) => {
             const previous = visibleMessages[index - 1];
             const grouped = previous?.authorId === message.authorId;
@@ -898,18 +862,19 @@ export default function Home() {
         </div>
         <form className="message-box" onSubmit={sendMessage}>
           <button type="button" aria-label="Adicionar anexo"><Plus size={17} /></button>
-          <input maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={realtimeConnected ? "Escreva no chat global" : "Conectando ao chat..."} />
+          <input maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={realtimeConnected ? `Mensagem em #${currentChannel.name}` : "Conectando ao chat..."} />
           <button type="button" aria-label="Enviar presente"><Gift size={16} /></button><button type="button" aria-label="Emoji"><Smile size={17} /></button><button className="send-button" type="submit" disabled={sending || !draft.trim()} aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}><Send size={15} /></button>
         </form>
       </section>
 
       <aside className="members-panel">
-        <div className="prototype-tag"><Radio size={11} /> SALA GLOBAL</div>
-        <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>Voz global</strong><small>{voiceChannel ? `${voiceName} · conectado` : "Sala aberta para testes"}</small><button onClick={() => voiceChannel ? leaveVoice() : void joinVoice("voice-geral")}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
+        <div className="prototype-tag"><Radio size={11} /> {activeCommunity.name.toUpperCase()}</div>
+        <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>{voiceChannel ? voiceName : "Canal de voz"}</strong><small>{voiceChannel ? `${currentVoiceMembers.length} na conversa` : "Entre para conversar em tempo real"}</small><button onClick={() => voiceChannel ? leaveVoice() : voiceChannels[0] && void joinVoice(voiceChannels[0].id)} disabled={!voiceChannels.length}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
         <h3><Users size={12} /> PESSOAS ONLINE — {onlineMembers.length}</h3>
         {onlineMembers.map((member, index) => <div className="member" key={member.id}><Avatar name={member.name} color={member.color} /><div><strong>{member.name}{index === 0 && <span>VOCÊ</span>}</strong><small>{index === 0 ? "Nesta aba" : "Online agora"}</small></div></div>)}
         {onlineMembers.length === 1 && <div className="alone-note"><Users size={18} /><strong>Só você por enquanto</strong><small>Abra o FYNEX em outra aba e escolha outro nome para testar.</small></div>}
       </aside>
+      <CreateCommunityModal open={createCommunityOpen} onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />
     </main>
   );
 }

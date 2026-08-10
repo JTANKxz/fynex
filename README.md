@@ -1,100 +1,111 @@
-# vinext-starter
+# FYNEX
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+FYNEX é uma plataforma web de comunidades com chat, voz P2P e transmissão de tela. O projeto está saindo da fase de protótipo e agora usa contas reais, perfis persistentes e políticas de acesso no banco.
 
-## Prerequisites
+## O que já funciona
 
-- Node.js `>=22.13.0`
+- cadastro com nome, usuário, e-mail e senha;
+- login automático logo após o cadastro;
+- confirmação de e-mail temporariamente desativada durante o MVP;
+- login, logout, renovação de sessão e rotas protegidas;
+- perfil em tela ampla com nome público, `@username`, biografia e card personalizável;
+- edição de perfil em modal separado da visualização;
+- comunidades persistentes com isolamento por membros;
+- canais de texto e voz criados por comunidade;
+- chat persistente e em tempo real por canal;
+- presença online separada por comunidade;
+- sala de voz WebRTC P2P, seleção de microfone, mute e deafen;
+- supressão de ruído, cancelamento de eco e ganho automático do navegador;
+- transmissão de tela 720p/30 fps sob demanda, também P2P;
+- interface responsiva AMOLED preta com violeta.
 
-## Quick Start
+## Arquitetura
+
+```text
+Navegador (Next.js)
+├── Interface: app/, components/, features/
+├── Sessão segura: cookies SSR do Supabase
+├── Chat/presença/sinalização: Supabase Realtime
+└── Áudio/tela: WebRTC P2P (a mídia não passa pela Vercel)
+          │
+          ├── Supabase Auth
+          └── PostgreSQL + RLS
+```
+
+Separação principal:
+
+- `app/`: páginas, rotas e Server Actions;
+- `components/`: componentes reutilizáveis de autenticação, perfil e comunidades;
+- `features/community/`: modelo e componentes próprios do chat/voz;
+- `lib/auth/`: validação de dados com Zod;
+- `lib/supabase/`: clientes browser/servidor, tipos e renovação de sessão;
+- `supabase/migrations/`: esquema versionado, índices, gatilhos e RLS;
+- `public/`: recursos estáticos e sons.
+
+## Segurança
+
+- a senha nunca é armazenada no código ou no PostgreSQL público;
+- o Supabase Auth faz hash e gerenciamento de credenciais;
+- o servidor valida a identidade com `getClaims()`, sem confiar em estado do navegador;
+- cookies de sessão são renovados no `proxy.ts`;
+- tabelas públicas usam Row Level Security;
+- `anon` não pode ler nem escrever perfis, comunidades, canais ou mensagens;
+- membros só podem consultar comunidades, canais e mensagens dos espaços aos quais pertencem;
+- apenas o dono pode alterar ou excluir a comunidade e administrar seus canais;
+- mensagens só podem ser criadas, alteradas ou excluídas pelo próprio autor;
+- perfis só podem ser alterados pelo dono;
+- entradas são validadas no servidor e novamente por constraints no banco;
+- `.env.local` é ignorado pelo Git. Nunca publique chaves privadas ou a senha do banco.
+
+A publishable key do Supabase pode existir no frontend; a proteção real é feita por autenticação, RLS e privilégios. Uma `service_role` jamais deve ser exposta ao navegador.
+
+## Sessão
+
+O access token padrão dura cerca de uma hora e é renovado por um refresh token rotativo. O objetivo de produto é manter a sessão por até **30 dias**. A limitação máxima precisa ser habilitada no painel do Supabase em **Authentication → Sessions → Time-box user sessions** (recurso dependente do plano). Sem essa opção, a sessão permanece renovável até logout, revogação ou expiração por inatividade configurada no projeto.
+
+## Configuração local
+
+Requisitos: Node.js 22.13+ e um projeto Supabase.
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+No Windows, copie `.env.example` manualmente. Preencha:
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Email and name are intended for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_sua_chave
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+No Supabase, adicione as URLs local e de produção em **Authentication → URL Configuration**. Para produção, configure `NEXT_PUBLIC_SITE_URL` com o domínio HTTPS real.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+## Banco de dados
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+A migração atual cria `profiles`, `communities`, `community_members`, `channels` e `messages`, além dos índices, gatilhos e políticas RLS. Cada conta recebe uma comunidade inicial com um canal de texto e outro de voz. Para um projeto novo, aplique os arquivos de `supabase/migrations` em ordem usando a CLI do Supabase.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+O esquema do protótipo anônimo foi substituído intencionalmente. Dados de teste antigos não são compatíveis com a versão autenticada.
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+## Comandos
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+```bash
+npm run dev       # desenvolvimento
+npm run lint      # análise estática
+npm run build     # build de produção
+npm test          # lint + build
+```
 
-## Useful Commands
+## Deploy na Vercel
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+O framework deve permanecer como Next.js e o diretório de saída deve ficar vazio/automático. Cadastre as três variáveis públicas acima. A Vercel entrega a aplicação e as Server Actions; áudio e tela continuam no WebRTC entre navegadores. Supabase transporta somente autenticação, dados, presença e sinalização.
 
-## Learn More
+## Limites atuais
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+O P2P é econômico para o servidor, mas cada participante envia uma cópia da mídia para cada pessoa conectada. É adequado para salas pequenas. Antes de abrir salas grandes, será necessário adicionar TURN para redes restritivas e migrar mídia para uma SFU com bitrate adaptativo. Consulte [ROADMAP.md](./ROADMAP.md).
+
+## Licença
+
+Projeto privado em desenvolvimento. Nenhuma licença de redistribuição foi definida.
