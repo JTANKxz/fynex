@@ -13,6 +13,7 @@ FYNEX é uma plataforma web de comunidades com chat, voz P2P e transmissão de t
 - comunidades persistentes com isolamento por membros;
 - canais de texto e voz criados por comunidade;
 - chat persistente e em tempo real por canal;
+- envio de uma imagem ou vídeo por mensagem, com prévia e progresso de upload;
 - presença online separada por comunidade;
 - sala de voz WebRTC P2P, seleção de microfone, mute e deafen;
 - supressão de ruído, cancelamento de eco e ganho automático do navegador;
@@ -26,6 +27,7 @@ Navegador (Next.js)
 ├── Interface: app/, components/, features/
 ├── Sessão segura: cookies SSR do Supabase
 ├── Chat/presença/sinalização: Supabase Realtime
+├── Fotos e vídeos do chat: upload direto ao ImageKit
 └── Áudio/tela: WebRTC P2P (a mídia não passa pela Vercel)
           │
           ├── Supabase Auth
@@ -53,6 +55,8 @@ Separação principal:
 - membros só podem consultar comunidades, canais e mensagens dos espaços aos quais pertencem;
 - apenas o dono pode alterar ou excluir a comunidade e administrar seus canais;
 - mensagens só podem ser criadas, alteradas ou excluídas pelo próprio autor;
+- anexos usam token curto, pasta vinculada ao usuário e verificação posterior pela API do ImageKit;
+- imagens aceitas: JPG, PNG, WebP e GIF até 8 MB; vídeos: MP4, WebM e MOV até 20 MB;
 - perfis só podem ser alterados pelo dono;
 - entradas são validadas no servidor e novamente por constraints no banco;
 - `.env.local` é ignorado pelo Git. Nunca publique chaves privadas ou a senha do banco.
@@ -86,7 +90,7 @@ IMAGEKIT_PRIVATE_KEY=private_sua_chave
 
 No Supabase, adicione as URLs local e de produção em **Authentication → URL Configuration**. Para produção, configure `NEXT_PUBLIC_SITE_URL` com o domínio HTTPS real.
 
-As três variáveis do ImageKit habilitam avatar e banner. `IMAGEKIT_PRIVATE_KEY` é exclusiva do servidor e nunca deve receber o prefixo `NEXT_PUBLIC_`. O navegador envia a imagem WebP diretamente ao ImageKit usando um token curto e assinado; o arquivo não atravessa a Vercel.
+As três variáveis do ImageKit habilitam avatar, banner e anexos do chat. `IMAGEKIT_PRIVATE_KEY` é exclusiva do servidor e nunca deve receber o prefixo `NEXT_PUBLIC_`. O navegador envia o arquivo diretamente ao ImageKit usando um token curto e assinado; o conteúdo do arquivo não atravessa a Vercel. A Server Action confere o arquivo no ImageKit antes de salvar seus metadados no Supabase.
 
 ## Banco de dados
 
@@ -105,7 +109,7 @@ npm test          # lint + build
 
 ## Deploy na Vercel
 
-O framework deve permanecer como Next.js e o diretório de saída deve ficar vazio/automático. Cadastre as variáveis do Supabase, do site e do ImageKit. A Vercel entrega a aplicação, a assinatura temporária do upload e as Server Actions; as imagens seguem diretamente do navegador ao ImageKit. Áudio e tela continuam no WebRTC entre navegadores. Supabase transporta autenticação, dados, presença e sinalização.
+O framework deve permanecer como Next.js e o diretório de saída deve ficar vazio/automático. Cadastre as variáveis do Supabase, do site e do ImageKit. A Vercel entrega a aplicação, a assinatura temporária do upload e as Server Actions; imagens e vídeos seguem diretamente do navegador ao ImageKit. Áudio e tela continuam no WebRTC entre navegadores. Supabase transporta autenticação, dados, metadados dos anexos, presença e sinalização.
 
 ## Limites atuais
 

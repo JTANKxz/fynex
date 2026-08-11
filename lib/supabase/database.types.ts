@@ -47,9 +47,9 @@ export type Database = {
         Relationships: [];
       };
       messages: {
-        Row: { id: string; channel_id: string; author_id: string; content: string; created_at: string; edited_at: string | null };
-        Insert: { id?: string; channel_id: string; author_id: string; content: string; created_at?: string; edited_at?: string | null };
-        Update: { content?: string; edited_at?: string | null };
+        Row: { id: string; channel_id: string; author_id: string; content: string; created_at: string; edited_at: string | null; attachment_kind: string | null; attachment_url: string | null; attachment_file_id: string | null; attachment_path: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_width: number | null; attachment_height: number | null; attachment_name: string | null };
+        Insert: { id?: string; channel_id: string; author_id: string; content?: string; created_at?: string; edited_at?: string | null; attachment_kind?: string | null; attachment_url?: string | null; attachment_file_id?: string | null; attachment_path?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_width?: number | null; attachment_height?: number | null; attachment_name?: string | null };
+        Update: { content?: string; edited_at?: string | null; attachment_kind?: string | null; attachment_url?: string | null; attachment_file_id?: string | null; attachment_path?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_width?: number | null; attachment_height?: number | null; attachment_name?: string | null };
         Relationships: [
           { foreignKeyName: "messages_author_id_fkey"; columns: ["author_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
           { foreignKeyName: "messages_channel_id_fkey"; columns: ["channel_id"]; isOneToOne: false; referencedRelation: "channels"; referencedColumns: ["id"] },

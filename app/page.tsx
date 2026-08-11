@@ -1,11 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import NextImage from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Eye, EyeOff, Gift, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Eye, EyeOff, FileVideo, Gift, Hash, Headphones, ImageIcon, LoaderCircle, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { Message as MessageRow } from "@/lib/supabase/database.types";
+import { sendMessageAction } from "@/app/actions/messages";
+import { uploadToImageKit, type ImageKitUploadToken } from "@/lib/media/imagekit-client";
 import { createClient } from "@/lib/supabase/client";
 import { CreateChannelModal } from "@/components/community/create-channel-modal";
 import { CreateCommunityModal } from "@/components/community/create-community-modal";
@@ -15,6 +18,15 @@ import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
 import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
 
 const seedMessages: Message[] = [];
+const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const VIDEO_MIMES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+const IMAGE_LIMIT = 8_000_000;
+const VIDEO_LIMIT = 20_000_000;
+type ChatAttachmentDraft = { file: File; kind: "image" | "video"; previewUrl: string };
+
+function formatBytes(value: number) {
+  return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(".0", "")} MB`;
+}
 
 export default function Home() {
   const router = useRouter();
@@ -31,6 +43,8 @@ export default function Home() {
   const [mediaSettingsOpen, setMediaSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
+  const [attachment, setAttachment] = useState<ChatAttachmentDraft | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
   const [screenSharing, setScreenSharing] = useState(false);
   const [localScreenPreview, setLocalScreenPreview] = useState<MediaStream | null>(null);
@@ -70,6 +84,11 @@ export default function Home() {
   const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
   const sentMessageSound = useRef<HTMLAudioElement | null>(null);
   const ownMessageIds = useRef<Set<string>>(new Set());
+  const attachmentInputId = useId();
+
+  useEffect(() => () => {
+    if (attachment) URL.revokeObjectURL(attachment.previewUrl);
+  }, [attachment]);
 
   const playSound = useCallback((sound: HTMLAudioElement | null) => {
     if (!sound) return;
@@ -567,7 +586,7 @@ export default function Home() {
       .subscribe();
 
     void supabase.from("messages")
-      .select("id, channel_id, author_id, content, created_at, edited_at, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
+      .select("id, channel_id, author_id, content, created_at, edited_at, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
       .eq("channel_id", activeChannel)
       .order("created_at", { ascending: false })
       .limit(150)
@@ -732,38 +751,74 @@ export default function Home() {
     }
   };
 
+  const chooseAttachment = (file?: File) => {
+    if (!file) return;
+    const kind = IMAGE_MIMES.has(file.type) ? "image" : VIDEO_MIMES.has(file.type) ? "video" : null;
+    if (!kind) {
+      setRealtimeError("Escolha uma imagem JPG, PNG, WebP ou GIF, ou um vídeo MP4, WebM ou MOV.");
+      return;
+    }
+    const limit = kind === "image" ? IMAGE_LIMIT : VIDEO_LIMIT;
+    if (file.size > limit) {
+      setRealtimeError(`${kind === "image" ? "A imagem" : "O vídeo"} pode ter no máximo ${kind === "image" ? "8 MB" : "20 MB"}.`);
+      return;
+    }
+    setRealtimeError("");
+    setUploadProgress(0);
+    setAttachment({ file, kind, previewUrl: URL.createObjectURL(file) });
+  };
+
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     const content = draft.trim().slice(0, 2000);
-    if (!content || !user || !activeChannel || sending) return;
+    if ((!content && !attachment) || !user || !activeChannel || sending) return;
 
     setSending(true);
     setRealtimeError("");
+    setUploadProgress(attachment ? 2 : 0);
     const messageId = crypto.randomUUID();
     ownMessageIds.current.add(messageId);
     window.setTimeout(() => ownMessageIds.current.delete(messageId), 30000);
-    const { data, error } = await supabase
-      .from("messages")
-      .insert({
+
+    try {
+      let uploaded: { fileId: string; filePath: string; url: string } | undefined;
+      if (attachment) {
+        const tokenResponse = await fetch("/api/imagekit/upload-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: `message-${attachment.kind}`, mime: attachment.file.type, channelId: activeChannel }),
+        });
+        const token = await tokenResponse.json() as ImageKitUploadToken;
+        if (!tokenResponse.ok || !token.token) throw new Error(token.error ?? "Não foi possível autorizar o anexo.");
+        uploaded = await uploadToImageKit(attachment.file, token, setUploadProgress);
+      }
+
+      const result = await sendMessageAction({
         id: messageId,
-        channel_id: activeChannel,
-        author_id: user.id,
+        channelId: activeChannel,
         content,
-      })
-      .select("id, channel_id, author_id, content, created_at, edited_at")
-      .single();
+        attachment: attachment && uploaded ? {
+          kind: attachment.kind,
+          fileId: uploaded.fileId,
+          filePath: uploaded.filePath,
+          url: uploaded.url,
+          originalName: attachment.file.name,
+        } : undefined,
+      });
+      if (result.error || !result.data) throw new Error(result.error ?? "A mensagem não foi enviada.");
 
-    setSending(false);
-    if (error) {
+      const sent = messageFromRow(result.data, { display_name: user.name, accent_color: user.color, avatar_url: user.avatarUrl ?? null });
+      setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
+      playSound(sentMessageSound.current);
+      setDraft("");
+      setAttachment(null);
+      setUploadProgress(0);
+    } catch (error) {
       ownMessageIds.current.delete(messageId);
-      setRealtimeError("A mensagem não foi enviada. Tente novamente.");
-      return;
+      setRealtimeError(error instanceof Error ? error.message : "A mensagem não foi enviada. Tente novamente.");
+    } finally {
+      setSending(false);
     }
-
-    const sent = messageFromRow(data, { display_name: user.name, accent_color: user.color, avatar_url: user.avatarUrl ?? null });
-    setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
-    playSound(sentMessageSound.current);
-    setDraft("");
   };
 
   const activeCommunity = communities.find((community) => community.id === activeCommunityId);
@@ -906,14 +961,32 @@ export default function Home() {
             const grouped = previous?.authorId === message.authorId;
             return <article className={`message ${grouped ? "grouped" : ""}`} key={message.id}>
               {!grouped && <Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} />}
-              <div>{!grouped && <header><strong style={{ color: message.color }}>{message.author}</strong><time>{message.time}</time></header>}<p>{message.content}</p></div>
+              <div>{!grouped && <header><strong style={{ color: message.color }}>{message.author}</strong><time>{message.time}</time></header>}
+                {message.content && <p>{message.content}</p>}
+                {message.attachment?.kind === "image" && <a className="message-media image" href={message.attachment.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${message.attachment.name}`}>
+                  <NextImage unoptimized src={message.attachment.url} alt={message.attachment.name} width={message.attachment.width ?? 1280} height={message.attachment.height ?? 960} sizes="(max-width: 700px) 82vw, 520px" />
+                  <small><ImageIcon size={13} /> {message.attachment.name} · {formatBytes(message.attachment.size)}</small>
+                </a>}
+                {message.attachment?.kind === "video" && <div className="message-media video">
+                  <video controls playsInline preload="metadata" src={message.attachment.url}>Seu navegador não consegue reproduzir este vídeo.</video>
+                  <small><FileVideo size={13} /> {message.attachment.name} · {formatBytes(message.attachment.size)}</small>
+                </div>}
+              </div>
             </article>;
           })}
         </div>
-        <form className="message-box" onSubmit={sendMessage}>
-          <button type="button" aria-label="Adicionar anexo"><Plus size={17} /></button>
-          <input maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={realtimeConnected ? `Mensagem em #${currentChannel.name}` : "Conectando ao chat..."} />
-          <button type="button" aria-label="Enviar presente"><Gift size={16} /></button><button type="button" aria-label="Emoji"><Smile size={17} /></button><button className="send-button" type="submit" disabled={sending || !draft.trim()} aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}><Send size={15} /></button>
+        <form className="message-composer" onSubmit={sendMessage}>
+          {attachment && <div className="attachment-draft">
+            <div className="attachment-preview">{attachment.kind === "image" ? <NextImage unoptimized src={attachment.previewUrl} alt="Prévia do anexo" fill sizes="76px" /> : <video src={attachment.previewUrl} muted playsInline />}</div>
+            <div><strong>{attachment.file.name}</strong><small>{attachment.kind === "image" ? "Imagem" : "Vídeo"} · {formatBytes(attachment.file.size)}</small>{sending && <span className="attachment-progress"><i style={{ width: `${uploadProgress}%` }} /></span>}</div>
+            <button type="button" onClick={() => setAttachment(null)} disabled={sending} aria-label="Remover anexo"><X size={15} /></button>
+          </div>}
+          <div className="message-box">
+            <label className="attachment-button" htmlFor={attachmentInputId} aria-label="Adicionar foto ou vídeo"><Plus size={17} /></label>
+            <input id={attachmentInputId} className="attachment-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" disabled={sending} onChange={(event) => { chooseAttachment(event.target.files?.[0]); event.target.value = ""; }} />
+            <input maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={realtimeConnected ? `Mensagem em #${currentChannel.name}` : "Conectando ao chat..."} />
+            <button type="button" aria-label="Enviar presente"><Gift size={16} /></button><button type="button" aria-label="Emoji"><Smile size={17} /></button><button className="send-button" type="submit" disabled={sending || (!draft.trim() && !attachment)} aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}>{sending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}</button>
+          </div>
         </form>
       </section>
 
