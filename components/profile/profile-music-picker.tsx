@@ -24,11 +24,11 @@ export function ProfileMusicPicker({ value, onChange }: { value: SpotifyTrack | 
     finally { setLoading(false); }
   };
   return <section className="profile-music-picker">
-    <div className="profile-section-title"><Music2 size={15} /><div><strong>Música no perfil</strong><small>Escolha uma faixa; a prévia de 30 s depende da disponibilidade no Spotify.</small></div></div>
+    <div className="profile-section-title"><Music2 size={15} /><div><strong>Música no perfil</strong><small>Escolha uma faixa e teste a reprodução antes de salvar.</small></div></div>
     {value && <div className="selected-profile-song"><ProfileSongCard song={value} compact /><button type="button" onClick={() => onChange(null)}><Trash2 size={14} />Remover</button></div>}
     <div className="profile-music-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); void search(); }} maxLength={80} placeholder="Buscar música ou artista" aria-label="Buscar música no Spotify" /><button type="button" onClick={() => void search()} disabled={loading || query.trim().length < 2}>{loading ? <LoaderCircle className="spin" size={15} /> : "Buscar"}</button></div>
     {error && <p className="form-message error">{error}</p>}
     {searched && tracks.length === 0 && <p className="profile-music-empty">Nenhuma faixa encontrada. Tente escrever também o nome do artista.</p>}
-    {tracks.length > 0 && <div className="spotify-results">{tracks.map((track) => <button type="button" key={track.id} onClick={() => { onChange(track); setTracks([]); setSearched(false); }}><span style={track.coverUrl ? { backgroundImage: `url("${track.coverUrl}")` } : undefined} /><div><strong>{track.name}</strong><small>{track.artist}{!track.previewUrl ? " · sem prévia" : ""}</small></div></button>)}</div>}
+    {tracks.length > 0 && <div className="spotify-results">{tracks.map((track) => <button type="button" key={track.id} onClick={() => { onChange(track); setTracks([]); setSearched(false); }}><span style={track.coverUrl ? { backgroundImage: `url("${track.coverUrl}")` } : undefined} /><div><strong>{track.name}</strong><small>{track.artist}</small></div></button>)}</div>}
   </section>;
 }
