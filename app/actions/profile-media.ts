@@ -85,7 +85,8 @@ export async function saveProfileMediaAction(input: unknown): Promise<MediaActio
   if (!details
     || details.fileId !== parsed.data.fileId
     || details.filePath !== parsed.data.filePath
-    || details.url !== parsed.data.url
+    || !details.url
+    || !isExpectedImageKitUrl(details.url, parsed.data.filePath)
     || details.fileType !== "image"
     || details.mime !== "image/webp"
     || details.width !== limits.width
