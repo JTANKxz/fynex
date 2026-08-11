@@ -13,4 +13,5 @@
 
 .mention:hover { color: #fff; background: rgba(139, 92, 246, .42); }
 .everyone { color: #f0ddff; background: rgba(168, 85, 247, .26); cursor: default; }
-
+.link { color: #a999ff; font-weight: 650; text-decoration: underline; text-decoration-color: rgba(169,153,255,.42); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.link:hover { color: #d5ccff; text-decoration-color: currentColor; }

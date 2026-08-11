@@ -1,0 +1,8 @@
+.card { position: relative; width: min(100%, 470px); display: flex; margin-top: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.075); border-radius: 13px; color: inherit; background: linear-gradient(115deg, rgba(139,92,246,.09), rgba(10,9,14,.92) 55%); text-decoration: none; transition: border-color .18s ease, transform .18s ease; }
+.card:hover { border-color: rgba(139,92,246,.35); transform: translateY(-1px); }
+.accent { width: 3px; flex: 0 0 3px; background: linear-gradient(#a78bfa, #6d54e9); }
+.content { min-width: 0; display: grid; gap: 5px; padding: 12px 14px 13px; }
+.content small { display: flex; align-items: center; gap: 5px; color: #9d8ff2; font-size: 7px; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
+.content strong { overflow: hidden; color: #e7e3ec; font-size: 11px; line-height: 1.3; text-overflow: ellipsis; }
+.content p { display: -webkit-box; margin: 0; overflow: hidden; color: #8f8997; font-size: 8px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+@media (max-width: 720px) { .card { width: 100%; }.content { padding: 11px 12px; } }

@@ -19,12 +19,14 @@ import { MessageActionsMenu, type MessageMenuState } from "@/components/communit
 import { MessageAttachment } from "@/components/community/message-attachment";
 import { MessageComposer } from "@/components/community/message-composer";
 import { MessageMentionText } from "@/components/community/message-mention-text";
+import { MessageLinkPreview } from "@/components/community/message-link-preview";
 import { MessageReplyPreview, ReplyComposerPreview } from "@/components/community/message-reply-preview";
 import { MediaSettingsModal, type ScreenPreset } from "@/components/community/media-settings-modal";
 import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
 import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
 import { EMPTY_COMMUNITY_ACCESS, resolveCommunityAccess } from "@/features/community/permissions";
 import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
+import { extractFirstLink } from "@/lib/links";
 
 const seedMessages: Message[] = [];
 
@@ -50,6 +52,7 @@ export default function Home() {
   const [mediaSettingsOpen, setMediaSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
+  const [removedLinkPreviewUrl, setRemovedLinkPreviewUrl] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [replySnapshots, setReplySnapshots] = useState<Record<string, Message>>({});
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
@@ -746,7 +749,7 @@ export default function Home() {
       .subscribe();
 
     void supabase.from("messages")
-      .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
+      .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, link_preview_url, link_preview_title, link_preview_description, link_preview_site_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
       .eq("channel_id", activeChannel)
       .order("created_at", { ascending: false })
       .limit(150)
@@ -765,7 +768,7 @@ export default function Home() {
         const missingReplyIds = [...new Set(loaded.map((message) => message.replyToId).filter((id): id is string => Boolean(id) && !loadedIds.has(id!)))];
         if (missingReplyIds.length) {
           const { data: parents } = await supabase.from("messages")
-            .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
+            .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, link_preview_url, link_preview_title, link_preview_description, link_preview_site_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
             .in("id", missingReplyIds);
           if (!disposed && parents) {
             const snapshots = parents.flatMap((row) => {
@@ -956,6 +959,7 @@ export default function Home() {
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     const content = draft.trim().slice(0, 2000);
+    const outgoingLink = extractFirstLink(content);
     if ((!content && !attachment) || !user || !activeChannel || sending) return;
 
     setSending(true);
@@ -983,6 +987,7 @@ export default function Home() {
         channelId: activeChannel,
         content,
         replyToId: replyTarget?.id ?? null,
+        includeLinkPreview: Boolean(outgoingLink && removedLinkPreviewUrl !== outgoingLink),
         attachment: attachment && uploaded ? {
           kind: attachment.kind,
           fileId: uploaded.fileId,
@@ -1003,6 +1008,7 @@ export default function Home() {
       if (typingStopTimer.current) window.clearTimeout(typingStopTimer.current);
       typingSentAt.current = 0;
       setDraft("");
+      setRemovedLinkPreviewUrl(null);
       setReplyTarget(null);
       setAttachment(null);
       setUploadProgress(0);
@@ -1018,6 +1024,7 @@ export default function Home() {
   const textChannels = communityChannels.filter((channel) => channel.type === "text");
   const voiceChannels = communityChannels.filter((channel) => channel.type === "voice");
   const visibleMessages = useMemo(() => messages.filter((message) => message.channelId === activeChannel), [messages, activeChannel]);
+  const draftLinkUrl = useMemo(() => extractFirstLink(draft), [draft]);
   const currentChannel = textChannels.find((channel) => channel.id === activeChannel) ?? textChannels[0];
   const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.name;
   const onlineMembers = user ? [user, ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id)] : [];
@@ -1239,6 +1246,7 @@ export default function Home() {
               {!grouped && <button className="message-profile-trigger avatar-trigger" onClick={() => openMemberProfile(message.authorId)} aria-label={`Ver perfil de ${message.author}`}><Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} /></button>}
               <div>{message.replyToId && <MessageReplyPreview message={repliedMessage} missing={!repliedMessage} onJump={() => void jumpToMessage(message.replyToId!)} />}{!grouped && <header><button className="message-profile-trigger" style={{ color: memberNameColor(message.authorId, message.color) }} onClick={() => openMemberProfile(message.authorId)}>{message.author}</button><time>{message.time}</time></header>}
                 {message.content && <p><MessageMentionText content={message.content} members={displayedCommunityMembers} onProfile={setSelectedProfile} /></p>}
+                {message.linkPreview ? <MessageLinkPreview preview={message.linkPreview} /> : null}
                 {message.attachment ? <MessageAttachment attachment={message.attachment} /> : null}
               </div>
               <button className="message-more" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setMessageMenu({ message, x: rect.right - 198, y: rect.bottom + 4 }); }} aria-label="Ações da mensagem"><MoreHorizontal size={16} /></button>
@@ -1247,7 +1255,7 @@ export default function Home() {
         </div>
         {activeTypingNames.length > 0 && <div className="typing-indicator"><i><span /><span /><span /></i><strong>{activeTypingNames.length === 1 ? activeTypingNames[0] : activeTypingNames.length === 2 ? `${activeTypingNames[0]} e ${activeTypingNames[1]}` : `${activeTypingNames[0]}, ${activeTypingNames[1]} e mais ${activeTypingNames.length - 2}`}</strong><small>{activeTypingNames.length === 1 ? "está digitando…" : "estão digitando…"}</small></div>}
         {replyTarget && <ReplyComposerPreview message={replyTarget} onClose={() => setReplyTarget(null)} />}
-        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} members={mentionMembers} canMentionEveryone={currentAccess.isAdmin} onAttachment={chooseAttachment} onDraft={handleDraftChange} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
+        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} members={mentionMembers} canMentionEveryone={currentAccess.isAdmin} onAttachment={chooseAttachment} onDraft={handleDraftChange} onRemoveAttachment={() => setAttachment(null)} linkUrl={draftLinkUrl} linkPreviewRemoved={Boolean(draftLinkUrl && removedLinkPreviewUrl === draftLinkUrl)} onRemoveLinkPreview={() => setRemovedLinkPreviewUrl(draftLinkUrl)} onRestoreLinkPreview={() => setRemovedLinkPreviewUrl(null)} onSubmit={sendMessage} />
       </section>
 
       <aside className="members-panel">

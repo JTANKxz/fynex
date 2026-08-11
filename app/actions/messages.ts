@@ -2,6 +2,8 @@
 
 import { z } from "zod";
 import { deleteImageKitFile, getImageKitFile, isExpectedImageKitUrl } from "@/lib/media/imagekit-server";
+import { extractFirstLink } from "@/lib/links";
+import { fetchLinkPreview } from "@/lib/link-preview-server";
 import { createClient } from "@/lib/supabase/server";
 import type { Message } from "@/lib/supabase/database.types";
 
@@ -18,6 +20,7 @@ const messageSchema = z.object({
   channelId: z.uuid(),
   content: z.string().trim().max(2000),
   replyToId: z.uuid().nullable().optional(),
+  includeLinkPreview: z.boolean().optional(),
   attachment: attachmentSchema.optional(),
 }).refine((value) => value.content.length > 0 || value.attachment, { message: "Mensagem vazia" });
 
@@ -70,6 +73,9 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     }
   }
 
+  const firstLink = parsed.data.includeLinkPreview ? extractFirstLink(parsed.data.content) : null;
+  const linkPreview = firstLink ? await fetchLinkPreview(firstLink).catch(() => null) : null;
+
   const { data, error } = await supabase.from("messages").insert({
     id: parsed.data.id,
     channel_id: parsed.data.channelId,
@@ -85,6 +91,10 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     attachment_width: verified?.width ?? null,
     attachment_height: verified?.height ?? null,
     attachment_name: attachment ? safeFileName(attachment.originalName) : null,
+    link_preview_url: linkPreview?.url ?? null,
+    link_preview_title: linkPreview?.title ?? null,
+    link_preview_description: linkPreview?.description ?? null,
+    link_preview_site_name: linkPreview?.siteName ?? null,
   }).select("*").single();
 
   if (error || !data) {

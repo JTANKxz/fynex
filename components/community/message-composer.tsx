@@ -1,10 +1,11 @@
 "use client";
 
-import { type FormEvent, type KeyboardEvent, useMemo, useRef, useState } from "react";
-import { AtSign, Gift, LoaderCircle, Megaphone, Send, Smile, X } from "lucide-react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { AtSign, ExternalLink, Gift, Link2Off, LoaderCircle, Megaphone, RotateCcw, Send, Smile, X } from "lucide-react";
 import NextImage from "next/image";
 import { CHAT_ATTACHMENT_ACCEPT, formatFileSize, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 import type { MemberProfile } from "./member-profile-modal";
+import type { LinkPreview } from "@/lib/links";
 import styles from "./message-composer.module.css";
 
 type MessageComposerProps = {
@@ -19,12 +20,18 @@ type MessageComposerProps = {
   onAttachment: (file?: File) => void;
   onDraft: (value: string) => void;
   onRemoveAttachment: () => void;
+  linkUrl: string | null;
+  linkPreviewRemoved: boolean;
+  onRemoveLinkPreview: () => void;
+  onRestoreLinkPreview: () => void;
   onSubmit: (event: FormEvent) => void;
 };
 
-export function MessageComposer({ attachment, channelName, draft, realtimeConnected, sending, uploadProgress, members, canMentionEveryone, onAttachment, onDraft, onRemoveAttachment, onSubmit }: MessageComposerProps) {
+export function MessageComposer({ attachment, channelName, draft, realtimeConnected, sending, uploadProgress, members, canMentionEveryone, onAttachment, onDraft, onRemoveAttachment, linkUrl, linkPreviewRemoved, onRemoveLinkPreview, onRestoreLinkPreview, onSubmit }: MessageComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const [linkPreviewResult, setLinkPreviewResult] = useState<{ requestedUrl: string; preview: LinkPreview } | null>(null);
+  const [linkPreviewLoading, setLinkPreviewLoading] = useState(false);
   const mentionMatch = draft.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
   const mentionQuery = mentionMatch?.[1].toLowerCase() ?? null;
   const suggestions = useMemo(() => {
@@ -51,6 +58,28 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
     }
   };
 
+  useEffect(() => {
+    if (!linkUrl || linkPreviewRemoved || linkPreviewResult?.requestedUrl === linkUrl) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLinkPreviewLoading(true);
+      void fetch("/api/link-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: linkUrl }),
+        signal: controller.signal,
+      }).then(async (response) => {
+        const result = await response.json() as { preview?: LinkPreview | null };
+        if (!controller.signal.aborted && result.preview) setLinkPreviewResult({ requestedUrl: linkUrl, preview: result.preview });
+      }).catch(() => undefined).finally(() => {
+        if (!controller.signal.aborted) setLinkPreviewLoading(false);
+      });
+    }, 550);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [linkPreviewRemoved, linkPreviewResult?.requestedUrl, linkUrl]);
+
+  const visibleLinkPreview = !linkPreviewRemoved && linkPreviewResult?.requestedUrl === linkUrl ? linkPreviewResult.preview : null;
+
   return <form className={styles.composer} onSubmit={onSubmit}>
     {attachment ? <div className={styles.selectedFile}>
       <div className={styles.preview}>
@@ -65,6 +94,13 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
         {sending ? <div className={styles.progress} aria-label={`Enviando ${uploadProgress}%`}><i style={{ width: `${uploadProgress}%` }} /></div> : null}
       </div>
       <button className={styles.removeButton} type="button" onClick={onRemoveAttachment} disabled={sending} aria-label="Remover anexo"><X size={16} /></button>
+    </div> : null}
+
+    {linkUrl && linkPreviewRemoved ? <div className={styles.removedLink}><Link2Off size={14} /><span>Prévia do link removida</span><button type="button" onClick={onRestoreLinkPreview}><RotateCcw size={12} />Restaurar</button></div> : null}
+    {linkUrl && !linkPreviewRemoved && (visibleLinkPreview || linkPreviewLoading) ? <div className={styles.selectedLink}>
+      <ExternalLink size={16} />
+      <span>{visibleLinkPreview ? <><small>{visibleLinkPreview.siteName}</small><strong>{visibleLinkPreview.title}</strong></> : <><small>CARREGANDO PRÉVIA</small><strong>{new URL(linkUrl).hostname}</strong></>}</span>
+      <button type="button" onClick={onRemoveLinkPreview} aria-label="Remover prévia do link"><X size={15} /></button>
     </div> : null}
 
     {suggestions.length ? <div className={styles.mentions} role="listbox" aria-label="Pessoas disponíveis para mencionar">

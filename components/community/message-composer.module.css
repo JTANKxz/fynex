@@ -48,6 +48,9 @@
   background: linear-gradient(115deg, rgba(128, 104, 255, .13), rgba(8, 8, 13, .97) 52%);
   box-shadow: 0 15px 38px rgba(0, 0, 0, .32), inset 0 1px rgba(255, 255, 255, .035);
 }
+.selectedLink, .removedLink { width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px; margin-bottom: 8px; border: 1px solid rgba(139,124,255,.23); border-radius: 13px; background: linear-gradient(110deg, rgba(139,92,246,.1), rgba(8,8,13,.96)); }
+.selectedLink { min-height: 62px; padding: 9px 10px 9px 13px; }.selectedLink > svg { flex: 0 0 auto; color: #a999ff; }.selectedLink > span { min-width: 0; flex: 1; display: grid; gap: 3px; }.selectedLink small { color: #8e80e9; font-size: 6px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }.selectedLink strong { overflow: hidden; color: #ded9e6; font-size: 9px; white-space: nowrap; text-overflow: ellipsis; }.selectedLink button { width: 31px; height: 31px; display: grid; place-items: center; border: 0; border-radius: 9px; color: #b9b4c0; background: rgba(255,255,255,.06); cursor: pointer; }
+.removedLink { min-height: 38px; padding: 7px 10px; color: #77717f; }.removedLink span { flex: 1; font-size: 8px; }.removedLink button { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border: 0; border-radius: 8px; color: #b5a9fa; background: rgba(139,92,246,.12); font-size: 7px; cursor: pointer; }
 
 .preview {
   position: relative;
