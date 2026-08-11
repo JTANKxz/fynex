@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { CommunityMemberRole, CommunityRole, Message as MessageRow, Profile } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction } from "@/app/actions/messages";
@@ -29,6 +29,7 @@ import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES,
 import { extractFirstLink } from "@/lib/links";
 
 const seedMessages: Message[] = [];
+type AppNotification = { id: string; author: string; text: string; communityId: string; channelId: string; channelName: string; createdAt: string; read: boolean };
 
 export default function Home() {
   const router = useRouter();
@@ -60,6 +61,8 @@ export default function Home() {
   const [attachment, setAttachment] = useState<ChatAttachmentDraft | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
+  const [voicePanelChannelId, setVoicePanelChannelId] = useState<string | null>(null);
+  const [pinnedVoiceUserId, setPinnedVoiceUserId] = useState<string | null>(null);
   const [voiceContext, setVoiceContext] = useState<{ communityId: string; communityName: string; channelName: string } | null>(null);
   const [screenSharing, setScreenSharing] = useState(false);
   const [localScreenPreview, setLocalScreenPreview] = useState<MediaStream | null>(null);
@@ -76,8 +79,13 @@ export default function Home() {
   const [noiseSuppressionSupported] = useState(() => typeof navigator === "undefined" || navigator.mediaDevices?.getSupportedConstraints().noiseSuppression === true);
   const [noiseSuppressionApplied, setNoiseSuppressionApplied] = useState<boolean | null>(null);
   const [echoCancellation, setEchoCancellation] = useState(true);
-  const [autoGainControl, setAutoGainControl] = useState(true);
+  const [echoCancellationApplied, setEchoCancellationApplied] = useState<boolean | null>(null);
+  const [autoGainControl, setAutoGainControl] = useState(false);
+  const [microphoneVolume, setMicrophoneVolume] = useState(100);
+  const [micTestActive, setMicTestActive] = useState(false);
+  const [micTestLevel, setMicTestLevel] = useState(0);
   const [screenPreset, setScreenPreset] = useState<ScreenPreset>("standard");
+  const [localScreenQuality, setLocalScreenQuality] = useState<{ height: number; frameRate: number } | null>(null);
   const [audioTrackVersion, setAudioTrackVersion] = useState(0);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
@@ -87,13 +95,20 @@ export default function Home() {
   const [realtimeError, setRealtimeError] = useState("");
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [mentionNotice, setMentionNotice] = useState<{ author: string; channelId: string; channelName: string } | null>(null);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; channelId: string }>>({});
   const [sending, setSending] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const voiceRef = useRef<string | null>(null);
   const watchingScreenRef = useRef<string | null>(null);
   const userRef = useRef<User | null>(null);
   const localStream = useRef<MediaStream | null>(null);
+  const rawLocalStream = useRef<MediaStream | null>(null);
+  const microphoneAudioContext = useRef<AudioContext | null>(null);
+  const microphoneGain = useRef<GainNode | null>(null);
+  const micTestStream = useRef<MediaStream | null>(null);
   const localScreenStream = useRef<MediaStream | null>(null);
   const screenWatchers = useRef<Set<string>>(new Set());
   const screenStage = useRef<HTMLElement>(null);
@@ -238,10 +253,10 @@ export default function Home() {
       sessionStorage.removeItem("nexo:user");
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) { router.replace("/login"); return; }
-      const { data: profile } = await supabase.from("profiles").select("id, display_name, accent_color, avatar_url").eq("id", authUser.id).single();
+      const { data: profile } = await supabase.from("profiles").select("id, username, display_name, accent_color, avatar_url").eq("id", authUser.id).single();
       if (cancelled) return;
       if (!profile) { await supabase.auth.signOut(); router.replace("/login?error=profile"); return; }
-      const current = { id: profile.id, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
+      const current = { id: profile.id, username: profile.username, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
       userRef.current = current;
       setUser(current);
       await loadWorkspace();
@@ -352,6 +367,8 @@ export default function Home() {
             name: data.name ?? old[data.from]?.name ?? "Visitante",
             screenSharing: !!data.screenSharing,
             screenStream: data.screenSharing ? old[data.from]?.screenStream : undefined,
+            screenHeight: data.screenHeight ?? old[data.from]?.screenHeight,
+            screenFrameRate: data.screenFrameRate ?? old[data.from]?.screenFrameRate,
           },
         }));
         if (!data.screenSharing && watchingScreenRef.current === data.from) {
@@ -381,7 +398,8 @@ export default function Home() {
         await pc.setLocalDescription(offer);
         post({ type: "offer", to: data.from, channel: voiceRef.current, name: me.name, payload: offer });
         if (localScreenStream.current) {
-          post({ type: "screen-state", to: data.from, channel: voiceRef.current, name: me.name, screenSharing: true });
+          const settings = localScreenStream.current.getVideoTracks()[0]?.getSettings();
+          post({ type: "screen-state", to: data.from, channel: voiceRef.current, name: me.name, screenSharing: true, screenHeight: settings?.height, screenFrameRate: settings?.frameRate });
         }
       } else if (data.type === "offer") {
         const pc = makePeer(data.from, data.name ?? "Visitante");
@@ -462,6 +480,7 @@ export default function Home() {
     screenWatchers.current.clear();
     setScreenViewerCount(0);
     setScreenSharing(false);
+    setLocalScreenQuality(null);
     setLocalScreenPreview(null);
     setStreamViewerOpen(false);
     stream.getTracks().forEach((track) => track.stop());
@@ -492,13 +511,20 @@ export default function Home() {
       });
       const videoTrack = stream.getVideoTracks()[0];
       if (!videoTrack) throw new Error("Captura de tela sem vídeo");
+      await videoTrack.applyConstraints({
+        width: { ideal: economy ? 960 : 1280, max: economy ? 960 : 1280 },
+        height: { ideal: economy ? 540 : 720, max: economy ? 540 : 720 },
+        frameRate: { ideal: economy ? 24 : 30, max: economy ? 24 : 30 },
+      }).catch(() => undefined);
       videoTrack.contentHint = "detail";
+      const appliedSettings = videoTrack.getSettings();
       localScreenStream.current = stream;
       setScreenSharing(true);
       setLocalScreenPreview(stream);
+      setLocalScreenQuality({ height: appliedSettings.height ?? (economy ? 540 : 720), frameRate: Math.round(appliedSettings.frameRate ?? (economy ? 24 : 30)) });
       setStreamViewerOpen(true);
       videoTrack.onended = () => { void stopScreenShare(); };
-      post({ type: "screen-state", channel: voiceRef.current, screenSharing: true });
+      post({ type: "screen-state", channel: voiceRef.current, screenSharing: true, screenHeight: appliedSettings.height, screenFrameRate: appliedSettings.frameRate });
     } catch (error) {
       if (error instanceof DOMException && error.name === "NotAllowedError") return;
       setMicError("Não foi possível iniciar a transmissão de tela.");
@@ -596,6 +622,8 @@ export default function Home() {
       if (voiceRealtime.current === channel) voiceRealtime.current = null;
       localScreenStream.current?.getTracks().forEach((track) => track.stop());
       localStream.current?.getTracks().forEach((track) => track.stop());
+      rawLocalStream.current?.getTracks().forEach((track) => track.stop());
+      void microphoneAudioContext.current?.close().catch(() => undefined);
       voicePeersMap.forEach((peer) => peer.close());
       voicePeersMap.clear();
       setVoiceMembers({});
@@ -750,6 +778,16 @@ export default function Home() {
         const mention = payload as { authorId?: string; author?: string; channelId?: string; channelName?: string };
         if (!mention.channelId || mention.authorId === realtimeUser.id) return;
         setMentionNotice({ author: mention.author ?? "Um administrador", channelId: mention.channelId, channelName: mention.channelName ?? "canal" });
+        setNotifications((current) => [{
+          id: crypto.randomUUID(),
+          author: mention.author ?? "Um administrador",
+          text: "mencionou @todos",
+          communityId: activeCommunityId,
+          channelId: mention.channelId!,
+          channelName: mention.channelName ?? "canal",
+          createdAt: new Date().toISOString(),
+          read: false,
+        }, ...current].slice(0, 50));
         if (mention.channelId !== activeChannelRef.current) playSound(receivedMessageSound.current);
       })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
@@ -813,7 +851,7 @@ export default function Home() {
         setSelectedProfile((current) => current?.id === profile.id ? { ...current, ...profile } : current);
 
         if (profile.id === realtimeUser.id) {
-          const nextUser = { id: profile.id, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
+          const nextUser = { id: profile.id, username: userRef.current?.username, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
           userRef.current = nextUser;
           setUser(nextUser);
         }
@@ -854,6 +892,20 @@ export default function Home() {
       setMessages((old) => old.some((item) => item.id === incoming.id) ? old : [...old, incoming].slice(-150));
       const wasSentInThisTab = ownMessageIds.current.delete(row.id);
       if (!wasSentInThisTab && row.author_id !== user.id) playSound(receivedMessageSound.current);
+      const username = userRef.current?.username;
+      if (row.author_id !== user.id && username && new RegExp(`(^|\\s)@${username}(?=\\s|$|[.,!?])`, "i").test(row.content)) {
+        const channelName = communityChannels.find((channel) => channel.id === row.channel_id)?.name ?? "canal";
+        setNotifications((current) => [{
+          id: row.id,
+          author: author.display_name,
+          text: `mencionou @${username}`,
+          communityId: activeCommunityId ?? "",
+          channelId: row.channel_id,
+          channelName,
+          createdAt: row.created_at,
+          read: false,
+        }, ...current.filter((notification) => notification.id !== row.id)].slice(0, 50));
+      }
     };
 
     const messageChannel = supabase
@@ -897,7 +949,7 @@ export default function Home() {
       disposed = true;
       void supabase.removeChannel(messageChannel);
     };
-  }, [activeChannel, playSound, supabase, user]);
+  }, [activeChannel, activeCommunityId, communityChannels, playSound, supabase, user]);
 
   useEffect(() => {
     if (!voiceChannel || !localStream.current || !user) return;
@@ -928,6 +980,26 @@ export default function Home() {
     return () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
   }, [voiceChannel, muted, user, post, audioTrackVersion]);
 
+  useEffect(() => {
+    if (!micTestActive) return;
+    const stream = micTestStream.current ?? localStream.current;
+    if (!stream) return;
+    const context = new AudioContext();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    const source = context.createMediaStreamSource(stream);
+    source.connect(analyser);
+    const values = new Uint8Array(analyser.frequencyBinCount);
+    let frame = 0;
+    const tick = () => {
+      analyser.getByteFrequencyData(values);
+      setMicTestLevel(Math.min(100, Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 1.8)));
+      frame = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
+  }, [micTestActive, audioTrackVersion]);
+
   const captureMicrophone = async (
     deviceId = selectedAudioInput,
     processing: Partial<Record<"noiseSuppression" | "echoCancellation" | "autoGainControl", boolean>> = {},
@@ -955,6 +1027,53 @@ export default function Home() {
     }
   };
 
+  const createOutgoingAudioStream = async (capturedStream: MediaStream) => {
+    if (microphoneAudioContext.current) await microphoneAudioContext.current.close().catch(() => undefined);
+    const context = new AudioContext();
+    await context.resume().catch(() => undefined);
+    const source = context.createMediaStreamSource(capturedStream);
+    const gain = context.createGain();
+    const destination = context.createMediaStreamDestination();
+    gain.gain.value = microphoneVolume / 100;
+    source.connect(gain).connect(destination);
+    microphoneAudioContext.current = context;
+    microphoneGain.current = gain;
+    return new MediaStream(destination.stream.getAudioTracks());
+  };
+
+  const toggleMicTest = async () => {
+    if (micTestActive) {
+      micTestStream.current?.getTracks().forEach((track) => track.stop());
+      micTestStream.current = null;
+      setMicTestActive(false);
+      setMicTestLevel(0);
+      return;
+    }
+    setMicError("");
+    try {
+      if (!localStream.current) micTestStream.current = await captureMicrophone();
+      setMicTestActive(true);
+    } catch {
+      setMicError("Não foi possível iniciar o teste do microfone.");
+    }
+  };
+
+  const updateMicrophoneVolume = async (value: number) => {
+    setMicrophoneVolume(value);
+    const gain = microphoneGain.current;
+    if (gain) gain.gain.setTargetAtTime(value / 100, gain.context.currentTime, .015);
+  };
+
+  const closeMediaSettings = () => {
+    if (micTestActive) {
+      micTestStream.current?.getTracks().forEach((track) => track.stop());
+      micTestStream.current = null;
+      setMicTestActive(false);
+      setMicTestLevel(0);
+    }
+    setMediaSettingsOpen(false);
+  };
+
   const joinVoice = async (channel: string) => {
     if (voiceChannel === channel) return;
     if (!voiceRealtime.current) {
@@ -971,14 +1090,17 @@ export default function Home() {
     }
     setMicError("");
     try {
-      const stream = await captureMicrophone();
+      const capturedStream = await captureMicrophone();
+      const stream = await createOutgoingAudioStream(capturedStream);
+      rawLocalStream.current = capturedStream;
       localStream.current = stream;
-      const appliedNoiseSuppression = stream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null;
+      const appliedNoiseSuppression = capturedStream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null;
       setNoiseSuppressionApplied(appliedNoiseSuppression);
+      setEchoCancellationApplied(capturedStream.getAudioTracks()[0]?.getSettings().echoCancellation ?? null);
       if (noiseSuppression && appliedNoiseSuppression === false) {
         setMicError("O microfone foi conectado, mas este navegador não aplicou o cancelamento de ruído.");
       }
-      const activeDeviceId = stream.getAudioTracks()[0]?.getSettings().deviceId;
+      const activeDeviceId = capturedStream.getAudioTracks()[0]?.getSettings().deviceId;
       if (activeDeviceId) setSelectedAudioInput(activeDeviceId);
       await refreshAudioInputs();
       voiceRef.current = channel;
@@ -999,6 +1121,11 @@ export default function Home() {
     }
   };
 
+  const openVoiceChannel = async (channel: string) => {
+    setVoicePanelChannelId(channel);
+    if (voiceChannel !== channel) await joinVoice(channel);
+  };
+
   const leaveVoice = () => {
     stopWatchingScreen();
     void stopScreenShare(false);
@@ -1012,10 +1139,18 @@ export default function Home() {
     pendingIceCandidates.current.clear();
     localStream.current?.getTracks().forEach((track) => track.stop());
     localStream.current = null;
+    rawLocalStream.current?.getTracks().forEach((track) => track.stop());
+    rawLocalStream.current = null;
+    void microphoneAudioContext.current?.close().catch(() => undefined);
+    microphoneAudioContext.current = null;
+    microphoneGain.current = null;
     setNoiseSuppressionApplied(null);
+    setEchoCancellationApplied(null);
     voiceRef.current = null;
     setVoiceChannel(null);
     setVoiceContext(null);
+    setVoicePanelChannelId(null);
+    setPinnedVoiceUserId(null);
     setVoicePeers({});
     setMuted(false);
     setDeafened(false);
@@ -1039,7 +1174,8 @@ export default function Home() {
     if (!voiceRef.current) return;
     setMicError("");
     try {
-      const replacementStream = await captureMicrophone(deviceId);
+      const capturedStream = await captureMicrophone(deviceId);
+      const replacementStream = await createOutgoingAudioStream(capturedStream);
       const replacementTrack = replacementStream.getAudioTracks()[0];
       if (!replacementTrack) throw new Error("Microfone sem faixa de áudio");
       await Promise.all(
@@ -1049,10 +1185,13 @@ export default function Home() {
         }),
       );
       localStream.current?.getTracks().forEach((track) => track.stop());
+      rawLocalStream.current?.getTracks().forEach((track) => track.stop());
       replacementTrack.enabled = !muted;
+      rawLocalStream.current = capturedStream;
       localStream.current = replacementStream;
-      const appliedNoiseSuppression = replacementTrack.getSettings().noiseSuppression ?? null;
+      const appliedNoiseSuppression = capturedStream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null;
       setNoiseSuppressionApplied(appliedNoiseSuppression);
+      setEchoCancellationApplied(capturedStream.getAudioTracks()[0]?.getSettings().echoCancellation ?? null);
       if (noiseSuppression && appliedNoiseSuppression === false) {
         setMicError("O microfone foi trocado, mas este navegador não aplicou o cancelamento de ruído.");
       }
@@ -1069,7 +1208,7 @@ export default function Home() {
     }
     if (setting === "echoCancellation") setEchoCancellation(enabled);
     if (setting === "autoGainControl") setAutoGainControl(enabled);
-    const track = localStream.current?.getAudioTracks()[0];
+    const track = rawLocalStream.current?.getAudioTracks()[0];
     if (!track) return;
     setMicError("");
     try {
@@ -1079,9 +1218,11 @@ export default function Home() {
         autoGainControl: { ideal: setting === "autoGainControl" ? enabled : autoGainControl },
       });
       setNoiseSuppressionApplied(track.getSettings().noiseSuppression ?? null);
+      setEchoCancellationApplied(track.getSettings().echoCancellation ?? null);
     } catch {
       try {
-        const replacementStream = await captureMicrophone(selectedAudioInput, { [setting]: enabled });
+        const capturedStream = await captureMicrophone(selectedAudioInput, { [setting]: enabled });
+        const replacementStream = await createOutgoingAudioStream(capturedStream);
         const replacementTrack = replacementStream.getAudioTracks()[0];
         if (!replacementTrack) throw new Error("Microfone sem faixa de audio");
         await Promise.all(
@@ -1091,9 +1232,12 @@ export default function Home() {
           }),
         );
         localStream.current?.getTracks().forEach((currentTrack) => currentTrack.stop());
+        rawLocalStream.current?.getTracks().forEach((currentTrack) => currentTrack.stop());
         replacementTrack.enabled = !muted;
+        rawLocalStream.current = capturedStream;
         localStream.current = replacementStream;
-        setNoiseSuppressionApplied(replacementTrack.getSettings().noiseSuppression ?? null);
+        setNoiseSuppressionApplied(capturedStream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null);
+        setEchoCancellationApplied(capturedStream.getAudioTracks()[0]?.getSettings().echoCancellation ?? null);
         setAudioTrackVersion((version) => version + 1);
       } catch {
         if (setting === "noiseSuppression") setNoiseSuppressionApplied(false);
@@ -1226,6 +1370,10 @@ export default function Home() {
   const watchedScreenPeer = watchingScreenId ? voicePeers[watchingScreenId] : undefined;
   const activeScreenStream = screenSharing ? localScreenPreview : watchedScreenPeer?.screenStream;
   const screenPresenter = screenSharing ? user?.name : watchedScreenPeer?.name ?? remoteScreenPeer?.name;
+  const screenQuality = screenSharing
+    ? localScreenQuality
+    : { height: watchedScreenPeer?.screenHeight ?? remoteScreenPeer?.screenHeight ?? 720, frameRate: Math.round(watchedScreenPeer?.screenFrameRate ?? remoteScreenPeer?.screenFrameRate ?? 30) };
+  const screenQualityLabel = `${screenQuality?.height ?? 720}P · ${screenQuality?.frameRate ?? 30} FPS`;
 
   const handleCommunityCreated = async (communityId: string) => {
     setCreateCommunityOpen(false);
@@ -1234,6 +1382,8 @@ export default function Home() {
 
   const selectCommunity = async (communityId: string) => {
     if (communityId === activeCommunityId) return;
+    setVoicePanelChannelId(null);
+    setPinnedVoiceUserId(null);
     await loadWorkspace(communityId);
   };
 
@@ -1315,26 +1465,40 @@ export default function Home() {
     await realtime.current?.send({ type: "broadcast", event: "message-deleted", payload: { id: message.id, channelId: message.channelId } });
   };
 
+  const openNotification = async (notification: AppNotification) => {
+    setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item));
+    setNotificationsOpen(false);
+    await loadWorkspace(notification.communityId, notification.channelId);
+  };
+
+  const unreadNotifications = notifications.filter((notification) => !notification.read).length;
+
   if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="server-rail" aria-label="Barra principal">
         <button className="server brand-server" aria-label="Início do FYNEX"><span>FYNEX</span></button>
         <div className="rail-divider" />
-        {communities.map((community) => <button key={community.id} className={`server community-server ${community.id === activeCommunityId ? "active" : ""}`} style={{ backgroundColor: community.id === activeCommunityId ? community.accent_color : undefined, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }} onClick={() => void selectCommunity(community.id)} aria-label={community.name} title={community.name}><span>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span><i /></button>)}
-        <button className="server add-server" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade" title="Criar comunidade"><Plus size={18} /></button>
-        <div className="community-badge"><Radio size={14} /><span>{activeCommunity.name}</span></div>
+        {voiceChannel && <button className="top-call-indicator" onClick={() => void returnToCallCommunity()} title="Voltar à chamada"><Radio size={14} /><span><strong>EM CALL</strong>{voiceContext?.communityName} · {voiceName}</span>{screenSharing && <MonitorUp size={13} />}</button>}
         <div className="rail-spacer" />
         <button className="top-online" onClick={() => setMembersOpen(true)} aria-label="Ver membros da comunidade" title="Ver membros"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></button>
+        <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações" title="Notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}</button>
         <button className="top-connections" onClick={() => setConnectionsTab("friends")} aria-label="Amigos e convites" title="Amigos e convites"><UserPlus size={16} /></button>
         <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} small /></Link>
       </aside>
 
+      {notificationsOpen && <aside className="notifications-popover" aria-label="Notificações"><header><strong>Notificações</strong><button onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações"><X size={15} /></button></header>{notifications.length ? <div>{notifications.map((notification) => <button key={notification.id} className={notification.read ? "read" : ""} onClick={() => void openNotification(notification)}><Bell size={14} /><span><strong>{notification.author}</strong><small>{notification.text} em #{notification.channelName}</small></span></button>)}</div> : <p>Nenhuma menção por enquanto.</p>}</aside>}
+
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
+      {sidebarCollapsed && <button className="sidebar-reopen" onClick={() => setSidebarCollapsed(false)} aria-label="Mostrar canais"><PanelLeftOpen size={17} /></button>}
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className="community-dot" style={{ backgroundColor: activeCommunity.accent_color, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isOwner && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
+        <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className="community-dot" style={{ backgroundColor: activeCommunity.accent_color, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isOwner && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="sidebar-collapse" onClick={() => setSidebarCollapsed(true)} aria-label="Recolher canais" title="Recolher canais"><PanelLeftClose size={16} /></button><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
+        <nav className="community-switcher" aria-label="Suas comunidades">
+          <div className="community-switcher-title"><span>SUAS COMUNIDADES</span><button onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade"><Plus size={14} /></button></div>
+          {communities.map((community) => <button key={community.id} className={`community-switcher-item ${community.id === activeCommunityId ? "active" : ""} ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)}><span className="community-switcher-avatar" style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span><strong>{community.name}</strong>{community.id === voiceContext?.communityId && <i title={screenSharing ? "Transmitindo nesta comunidade" : "Em chamada nesta comunidade"}>{screenSharing ? <MonitorUp size={11} /> : <Radio size={11} />}</i>}</button>)}
+        </nav>
         <div className="invite-card"><UserPlus size={15} /><div><strong>Convide alguém</strong><small>Amigos, convites e entrada</small></div><button onClick={() => setConnectionsTab("community")}>Gerenciar</button></div>
         <nav className="channel-nav">
           <section>
@@ -1346,7 +1510,7 @@ export default function Home() {
             {voiceChannels.map((channel) => {
               const channelMembers = getVoiceMembers(channel.id);
               return <div key={channel.id}>
-                <div className="channel-row"><button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)} disabled={voiceChannel !== channel.id && channelMembers.length >= (channel.user_limit ?? 10)}><Radio size={16} />{channel.name}<small className="voice-capacity">{channelMembers.length}/{channel.user_limit ?? 10}</small>{voiceChannel === channel.id && <b className="live-pill">CONECTADO</b>}</button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`} title="Editar canal"><Pencil size={12} /></button>}</div>
+                <div className="channel-row"><button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void openVoiceChannel(channel.id)} disabled={voiceChannel !== channel.id && channelMembers.length >= (channel.user_limit ?? 10)}><Radio size={16} />{channel.name}<small className="voice-capacity">{channelMembers.length}/{channel.user_limit ?? 10}</small>{voiceChannel === channel.id && <b className="live-pill">CONECTADO</b>}</button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`} title="Editar canal"><Pencil size={12} /></button>}</div>
                 {channelMembers.length > 0 && <div className="voice-list">
                   {channelMembers.map((member) => {
                     const isCurrentUser = member.id === user.id;
@@ -1354,7 +1518,7 @@ export default function Home() {
                     const memberSpeaking = isCurrentUser ? speaking : !!peer?.speaking;
                     const memberMuted = isCurrentUser ? muted : (peer?.muted ?? member.muted ?? false);
                     const locallyMuted = locallyMutedUsers.has(member.id);
-                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""} ${locallyMuted ? "locally-muted" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span style={{ color: memberNameColor(member.id, member.color) }}>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{locallyMuted ? "silenciado para você" : peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <button className="local-mute-button" onClick={() => toggleLocalMute(member.id)} aria-label={locallyMuted ? `Ouvir ${member.name}` : `Silenciar ${member.name} somente para você`} title={locallyMuted ? "Voltar a ouvir" : "Silenciar para mim"}>{locallyMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened || locallyMuted} />}</div>;
+                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""} ${locallyMuted ? "locally-muted" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span style={{ color: memberNameColor(member.id, member.color) }}>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{locallyMuted ? "silenciado para você" : peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <button className="local-mute-button" onClick={() => toggleLocalMute(member.id)} aria-label={locallyMuted ? `Ouvir ${member.name}` : `Silenciar ${member.name} somente para você`} title={locallyMuted ? "Voltar a ouvir" : "Silenciar para mim"}>{locallyMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}</div>;
                   })}
                 </div>}
               </div>;
@@ -1381,9 +1545,15 @@ export default function Home() {
           <div className="header-actions"><div className="header-online"><span />{onlineMembers.length} online</div><button aria-label="Notificações"><Bell size={16} /></button><label><Search size={14} /><input placeholder="Buscar no chat" /></label></div>
         </header>
 
+        {voicePanelChannelId && <section className="voice-room-stage">
+          <header><div><span>CANAL DE VOZ</span><strong>{voiceChannel === voicePanelChannelId ? voiceName : voiceChannels.find((channel) => channel.id === voicePanelChannelId)?.name ?? "Sala de voz"}</strong><small>{getVoiceMembers(voicePanelChannelId).length} participante(s)</small></div><button onClick={() => { setVoicePanelChannelId(null); setPinnedVoiceUserId(null); }} aria-label="Fechar visualização da chamada"><X size={18} /></button></header>
+          <div className="voice-room-grid">{getVoiceMembers(voicePanelChannelId).map((member) => { const peer = voicePeers[member.id]; const isCurrentUser = member.id === user.id; const locallyMuted = locallyMutedUsers.has(member.id); return <button key={member.id} className={`voice-room-card ${(isCurrentUser ? speaking : peer?.speaking) ? "speaking" : ""} ${pinnedVoiceUserId === member.id ? "pinned" : ""}`} onClick={() => { setPinnedVoiceUserId((current) => current === member.id ? null : member.id); if (!isCurrentUser) openMemberProfile(member.id); }}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} /><strong>{member.name}{isCurrentUser ? " (você)" : ""}</strong><small>{locallyMuted ? "Silenciado para você" : peer?.stream || isCurrentUser ? "Na chamada" : "Conectando"}</small>{pinnedVoiceUserId === member.id && <i>DESTAQUE</i>}</button>; })}</div>
+          <footer><button className={muted ? "active" : ""} onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />}<span>{muted ? "Ativar microfone" : "Silenciar"}</span></button><button className={deafened ? "active" : ""} onClick={() => setDeafened(!deafened)}>{deafened ? <VolumeX size={17} /> : <Volume2 size={17} />}<span>{deafened ? "Ouvir novamente" : "Ensurdecer"}</span></button><button className={screenSharing ? "active screen" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()}>{screenSharing ? <Square size={16} /> : <MonitorUp size={17} />}<span>{screenSharing ? "Parar transmissão" : "Transmitir tela"}</span></button><button className="leave" onClick={leaveVoice}><PhoneOff size={17} /><span>Sair da chamada</span></button></footer>
+        </section>}
+
         {(screenSharing || remoteScreenPeer) && !streamViewerOpen && <section className="screen-invite">
           <div className="screen-invite-preview"><MonitorUp size={25} /></div>
-          <div><span>TRANSMISSÃO AO VIVO</span><strong>{screenSharing ? "Sua tela está sendo transmitida" : `${remoteScreenPeer?.name} está compartilhando a tela`}</strong><small>720p · 30 FPS · conexão ativada somente para espectadores</small></div>
+          <div><span>TRANSMISSÃO AO VIVO</span><strong>{screenSharing ? "Sua tela está sendo transmitida" : `${remoteScreenPeer?.name} está compartilhando a tela`}</strong><small>{screenQualityLabel} · conexão ativada somente para espectadores</small></div>
           <button onClick={() => {
             if (screenSharing || watchingScreenId === remoteScreenPeer?.id) {
               setStreamViewerOpen(true);
@@ -1396,7 +1566,7 @@ export default function Home() {
         {streamViewerOpen && (screenSharing || watchingScreenId) && <section className="screen-stage" ref={screenStage}>
           <header className="screen-toolbar">
             <div><MonitorUp size={16} /><span><strong>{screenPresenter ?? "Transmissão"}</strong><small>{screenSharing ? `${screenViewerCount} ${screenViewerCount === 1 ? "espectador" : "espectadores"}` : activeScreenStream ? "Ao vivo" : "Conectando ao vídeo..."}</small></span></div>
-            <div><b>720P · 30 FPS</b><button onClick={() => setStreamViewerOpen(false)} aria-label="Minimizar transmissão"><Minimize2 size={15} /></button><button onClick={() => screenSharing ? void stopScreenShare() : stopWatchingScreen()} aria-label={screenSharing ? "Encerrar transmissão" : "Sair da transmissão"}><X size={16} /></button></div>
+            <div><b>{screenQualityLabel}</b><button onClick={() => setStreamViewerOpen(false)} aria-label="Minimizar transmissão"><Minimize2 size={15} /></button><button onClick={() => screenSharing ? void stopScreenShare() : stopWatchingScreen()} aria-label={screenSharing ? "Encerrar transmissão" : "Sair da transmissão"}><X size={16} /></button></div>
           </header>
           <div className="screen-player">
             {activeScreenStream ? <ScreenVideo stream={activeScreenStream} /> : <div className="screen-loading"><span /><strong>Conectando à transmissão</strong><small>O vídeo começa assim que a conexão direta estiver pronta.</small></div>}
@@ -1450,7 +1620,10 @@ export default function Home() {
       {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}
-      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} noiseSuppressionSupported={noiseSuppressionSupported} noiseSuppressionApplied={noiseSuppressionApplied} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
+      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} noiseSuppressionSupported={noiseSuppressionSupported} noiseSuppressionApplied={noiseSuppressionApplied} echoCancellation={echoCancellation} echoCancellationApplied={echoCancellationApplied} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} microphoneVolume={microphoneVolume} onMicrophoneVolume={(value) => void updateMicrophoneVolume(value)} micTestActive={micTestActive} micTestLevel={micTestLevel} onToggleMicTest={() => void toggleMicTest()} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={closeMediaSettings} />}
+      <div className="persistent-audio-rack" aria-hidden="true">
+        {Object.values(voicePeers).map((peer) => <RemoteAudio key={peer.id} stream={peer.stream} muted={deafened || locallyMutedUsers.has(peer.id)} />)}
+      </div>
     </main>
   );
 }

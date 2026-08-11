@@ -118,14 +118,14 @@ export function ProfileMediaEditor({ profile, onChanged }: { profile: Profile; o
   return <section className="profile-media-editor">
     <div className="profile-media-card banner-card">
       <div className="media-preview" style={profile.banner_url ? { backgroundImage: `url("${profile.banner_url}")` } : { background: profile.accent_color }}><ImagePlus size={21} /></div>
-      <div><strong>Banner do perfil</strong><small>Formato panorâmico · JPG, PNG ou WebP</small></div>
+      <div><strong>Banner do perfil</strong><small>Proporção 16:5 · recomendado 1600 × 500 px</small></div>
       <label className="media-select-button" htmlFor={bannerInputId} aria-disabled={!!busy}><ImagePlus size={14} />{profile.banner_url ? "Trocar" : "Adicionar"}</label>
       {profile.banner_url && <button type="button" className="remove-media" onClick={() => void removeImage("banner")} disabled={!!busy} aria-label="Remover banner">{busy === "banner" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button>}
       <input id={bannerInputId} className="media-file-input" type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy} onChange={(event) => { chooseFile("banner", event.target.files?.[0]); event.target.value = ""; }} />
     </div>
     <div className="profile-media-card avatar-card">
       <div className="media-preview" style={profile.avatar_url ? { backgroundImage: `url("${profile.avatar_url}")` } : { background: profile.accent_color }}><Camera size={19} /></div>
-      <div><strong>Foto de perfil</strong><small>Recorte quadrado · JPG, PNG ou WebP</small></div>
+      <div><strong>Foto de perfil</strong><small>Proporção 1:1 · recomendado 512 × 512 px</small></div>
       <label className="media-select-button" htmlFor={avatarInputId} aria-disabled={!!busy}><Camera size={14} />{profile.avatar_url ? "Trocar" : "Adicionar"}</label>
       {profile.avatar_url && <button type="button" className="remove-media" onClick={() => void removeImage("avatar")} disabled={!!busy} aria-label="Remover foto de perfil">{busy === "avatar" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button>}
       <input id={avatarInputId} className="media-file-input" type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy} onChange={(event) => { chooseFile("avatar", event.target.files?.[0]); event.target.value = ""; }} />
