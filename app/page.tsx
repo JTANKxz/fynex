@@ -1483,6 +1483,23 @@ export default function Home() {
       <aside className="server-rail" aria-label="Barra principal">
         <button className="server brand-server" aria-label="Início do FYNEX"><span>FYNEX</span></button>
         <div className="rail-divider" />
+        <nav className="rail-community-list" aria-label="Suas comunidades">
+          {communities.map((community) => (
+            <button
+              key={community.id}
+              className={`rail-community ${community.id === activeCommunityId ? "active" : ""} ${community.id === voiceContext?.communityId ? "in-call" : ""}`}
+              onClick={() => void selectCommunity(community.id)}
+              aria-label={`Abrir ${community.name}`}
+              title={community.name}
+            >
+              <span style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>
+                {community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}
+              </span>
+              {community.id === voiceContext?.communityId && <i aria-hidden="true" />}
+            </button>
+          ))}
+          <button className="rail-community rail-community-add" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade" title="Criar comunidade"><Plus size={18} /></button>
+        </nav>
         {voiceChannel && <button className="top-call-indicator" onClick={() => void returnToCallCommunity()} title="Voltar à chamada"><Radio size={14} /><span><strong>EM CALL</strong>{voiceContext?.communityName} · {voiceName}</span>{screenSharing && <MonitorUp size={13} />}</button>}
         <div className="rail-spacer" />
         <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações" title="Notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}</button>
