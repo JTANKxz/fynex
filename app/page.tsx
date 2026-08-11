@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { CommunityMemberRole, CommunityRole, Message as MessageRow } from "@/lib/supabase/database.types";
+import type { CommunityMemberRole, CommunityRole, Message as MessageRow, Profile } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction } from "@/app/actions/messages";
 import { uploadToImageKit, type ImageKitUploadToken } from "@/lib/media/imagekit-client";
 import { createClient } from "@/lib/supabase/client";
@@ -99,6 +99,7 @@ export default function Home() {
   const ownMessageIds = useRef<Set<string>>(new Set());
   const highlightTimer = useRef<number | null>(null);
   const activeChannelRef = useRef<string | null>(null);
+  const communityMembersRef = useRef<MemberProfile[]>([]);
   const typingSentAt = useRef(0);
   const typingStopTimer = useRef<number | null>(null);
   const remoteTypingTimers = useRef<Map<string, number>>(new Map());
@@ -124,14 +125,17 @@ export default function Home() {
     const membershipMap = new Map(memberships.map((membership) => [membership.user_id, membership]));
     const roles = rolesResult.data ?? [];
     const assignments = assignmentsResult.data ?? [];
-    setCommunityRoles(roles);
-    setMemberRoleAssignments(assignments);
-    setCommunityMembers((profilesResult.data ?? []).map((profile) => ({
+    const nextMembers = (profilesResult.data ?? []).map((profile) => ({
       ...profile,
       joinedAt: membershipMap.get(profile.id)?.joined_at,
       isOwner: membershipMap.get(profile.id)?.role === "owner",
       roles: roles.filter((role) => assignments.some((assignment) => assignment.user_id === profile.id && assignment.role_id === role.id)),
-    })));
+    }));
+    communityMembersRef.current = nextMembers;
+    setCommunityRoles(roles);
+    setMemberRoleAssignments(assignments);
+    setCommunityMembers(nextMembers);
+    setSelectedProfile((current) => current ? nextMembers.find((member) => member.id === current.id) ?? null : null);
   }, [supabase]);
   useEffect(() => () => {
     if (attachment) URL.revokeObjectURL(attachment.previewUrl);
@@ -435,7 +439,9 @@ export default function Home() {
   }, [refreshAudioInputs]);
 
   useEffect(() => {
-    if (!user || !activeCommunityId) return;
+    if (!activeCommunityId) return;
+    const realtimeUser = userRef.current;
+    if (!realtimeUser) return;
     // The authenticated browser client is created once for this page.
     if (!supabase) {
       queueMicrotask(() => setRealtimeError("Supabase não configurado neste ambiente."));
@@ -443,6 +449,31 @@ export default function Home() {
     }
 
     let disposed = false;
+    let peopleRefreshTimer: number | null = null;
+    let channelsRefreshTimer: number | null = null;
+
+    const refreshPeopleSoon = () => {
+      if (peopleRefreshTimer) window.clearTimeout(peopleRefreshTimer);
+      peopleRefreshTimer = window.setTimeout(() => {
+        if (!disposed) void loadCommunityPeople(activeCommunityId);
+      }, 80);
+    };
+
+    const refreshChannelsSoon = () => {
+      if (channelsRefreshTimer) window.clearTimeout(channelsRefreshTimer);
+      channelsRefreshTimer = window.setTimeout(() => {
+        void supabase.from("channels").select("*").eq("community_id", activeCommunityId).order("position").order("created_at").then(({ data, error }) => {
+          if (disposed || error) return;
+          const nextChannels = data ?? [];
+          setCommunityChannels(nextChannels);
+          setActiveChannel((current) => nextChannels.some((item) => item.id === current && item.type === "text")
+            ? current
+            : nextChannels.find((item) => item.type === "text")?.id ?? null);
+        });
+      }, 80);
+    };
+
+    const isActiveCommunityRow = (row: Record<string, unknown>) => row.community_id === activeCommunityId;
     const handleSignal = async (data: Signal) => {
       const me = userRef.current;
       if (!me) return;
@@ -528,7 +559,7 @@ export default function Home() {
     const channel = supabase
       .channel(`fynex:community:${activeCommunityId}`, {
         config: {
-          presence: { key: user.id },
+          presence: { key: realtimeUser.id },
           broadcast: { self: false, ack: false },
         },
       })
@@ -539,7 +570,7 @@ export default function Home() {
         const presences = Object.values(state).flat();
         presences.forEach((presence) => {
           if (!presence.id) return;
-          if (presence.id !== user.id) next[presence.id] = presence;
+          if (presence.id !== realtimeUser.id) next[presence.id] = presence;
           if (presence.voiceChannel) nextVoiceMembers[presence.id] = presence;
         });
         setOnlineUsers(next);
@@ -550,7 +581,7 @@ export default function Home() {
 
         const connectedIds = new Set(
           presences
-            .filter((presence) => presence.id !== user.id && presence.voiceChannel === currentVoiceChannel)
+            .filter((presence) => presence.id !== realtimeUser.id && presence.voiceChannel === currentVoiceChannel)
             .map((presence) => presence.id),
         );
 
@@ -560,10 +591,10 @@ export default function Home() {
 
         presences.forEach((presence) => {
           if (
-            presence.id === user.id
+            presence.id === realtimeUser.id
             || presence.voiceChannel !== currentVoiceChannel
             || peers.current.has(presence.id)
-            || user.id > presence.id
+            || realtimeUser.id > presence.id
           ) return;
 
           void (async () => {
@@ -571,7 +602,7 @@ export default function Home() {
               const pc = makePeer(presence.id, presence.name ?? "Visitante");
               const offer = await pc.createOffer();
               await pc.setLocalDescription(offer);
-              post({ type: "offer", to: presence.id, channel: currentVoiceChannel, name: user.name, payload: offer });
+              post({ type: "offer", to: presence.id, channel: currentVoiceChannel, name: realtimeUser.name, payload: offer });
             } catch (error) {
               console.error("Falha ao iniciar conexão WebRTC", error);
               closePeer(presence.id);
@@ -590,13 +621,13 @@ export default function Home() {
       })
       .on("broadcast", { event: "mention-everyone" }, ({ payload }) => {
         const mention = payload as { authorId?: string; author?: string; channelId?: string; channelName?: string };
-        if (!mention.channelId || mention.authorId === user.id) return;
+        if (!mention.channelId || mention.authorId === realtimeUser.id) return;
         setMentionNotice({ author: mention.author ?? "Um administrador", channelId: mention.channelId, channelName: mention.channelName ?? "canal" });
         if (mention.channelId !== activeChannelRef.current) playSound(receivedMessageSound.current);
       })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         const typing = payload as { userId?: string; name?: string; channelId?: string; active?: boolean };
-        if (!typing.userId || !typing.channelId || typing.userId === user.id) return;
+        if (!typing.userId || !typing.channelId || typing.userId === realtimeUser.id) return;
         const previousTimer = remoteTypingTimers.current.get(typing.userId);
         if (previousTimer) window.clearTimeout(previousTimer);
         if (!typing.active) {
@@ -609,9 +640,56 @@ export default function Home() {
           remoteTypingTimers.current.delete(typing.userId!);
         }, 2600));
       })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "communities", filter: `id=eq.${activeCommunityId}` }, ({ new: updated }) => {
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "communities" }, ({ new: updated }) => {
         const community = updated as CommunitySpace;
         setCommunities((current) => current.map((item) => item.id === community.id ? community : item));
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "channels", filter: `community_id=eq.${activeCommunityId}` }, refreshChannelsSoon)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "channels", filter: `community_id=eq.${activeCommunityId}` }, refreshChannelsSoon)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "channels" }, ({ old }) => {
+        if (isActiveCommunityRow(old)) refreshChannelsSoon();
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "community_members", filter: `community_id=eq.${activeCommunityId}` }, refreshPeopleSoon)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "community_members", filter: `community_id=eq.${activeCommunityId}` }, refreshPeopleSoon)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "community_members" }, ({ old }) => {
+        if (isActiveCommunityRow(old)) refreshPeopleSoon();
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "community_roles", filter: `community_id=eq.${activeCommunityId}` }, refreshPeopleSoon)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "community_roles", filter: `community_id=eq.${activeCommunityId}` }, refreshPeopleSoon)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "community_roles" }, ({ old }) => {
+        if (isActiveCommunityRow(old)) refreshPeopleSoon();
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "community_member_roles", filter: `community_id=eq.${activeCommunityId}` }, refreshPeopleSoon)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "community_member_roles", filter: `community_id=eq.${activeCommunityId}` }, refreshPeopleSoon)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "community_member_roles" }, ({ old }) => {
+        if (isActiveCommunityRow(old)) refreshPeopleSoon();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, ({ new: updated }) => {
+        const profile = updated as Profile;
+        const belongsToCommunity = communityMembersRef.current.some((member) => member.id === profile.id);
+        if (!belongsToCommunity && profile.id !== realtimeUser.id) return;
+
+        communityMembersRef.current = communityMembersRef.current.map((member) => member.id === profile.id ? { ...member, ...profile } : member);
+        setCommunityMembers(communityMembersRef.current);
+        setMessages((current) => current.map((message) => message.authorId === profile.id ? {
+          ...message,
+          author: profile.display_name,
+          color: profile.accent_color,
+          avatarUrl: profile.avatar_url,
+        } : message));
+        setReplySnapshots((current) => Object.fromEntries(Object.entries(current).map(([id, message]) => [id, message.authorId === profile.id ? {
+          ...message,
+          author: profile.display_name,
+          color: profile.accent_color,
+          avatarUrl: profile.avatar_url,
+        } : message])));
+        setSelectedProfile((current) => current?.id === profile.id ? { ...current, ...profile } : current);
+
+        if (profile.id === realtimeUser.id) {
+          const nextUser = { id: profile.id, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
+          userRef.current = nextUser;
+          setUser(nextUser);
+        }
       })
       .subscribe(async (status, error) => {
         if (disposed) return;
@@ -619,7 +697,7 @@ export default function Home() {
           realtime.current = channel;
           setRealtimeConnected(true);
           setRealtimeError("");
-          await channel.track({ ...user, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
+          await channel.track({ ...realtimeUser, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           setRealtimeConnected(false);
           setRealtimeError(error?.message ?? "Não foi possível conectar ao tempo real.");
@@ -628,11 +706,13 @@ export default function Home() {
 
     return () => {
       disposed = true;
+      if (peopleRefreshTimer) window.clearTimeout(peopleRefreshTimer);
+      if (channelsRefreshTimer) window.clearTimeout(channelsRefreshTimer);
       if (voiceRef.current) {
         void channel.send({
           type: "broadcast",
           event: "voice-signal",
-          payload: { type: "leave", from: user.id, channel: voiceRef.current } satisfies Signal,
+          payload: { type: "leave", from: realtimeUser.id, channel: voiceRef.current } satisfies Signal,
         });
       }
       void channel.untrack();
@@ -644,7 +724,7 @@ export default function Home() {
       setOnlineUsers({});
       setVoiceMembers({});
     };
-  }, [activeCommunityId, user, closePeer, makePeer, playSound, post, renegotiatePeer, supabase]);
+  }, [activeCommunityId, closePeer, loadCommunityPeople, makePeer, playSound, post, renegotiatePeer, supabase]);
 
   useEffect(() => {
     if (!user || !activeChannel) return;
