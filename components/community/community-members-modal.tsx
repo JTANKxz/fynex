@@ -7,7 +7,6 @@ import type { CommunityMemberRole, CommunityRole } from "@/lib/supabase/database
 import type { CommunityAccess } from "@/features/community/permissions";
 import type { MemberProfile } from "./member-profile-modal";
 import styles from "./community-members-modal.module.css";
-import { presenceLabels } from "@/lib/presence";
 
 function memberRoleColor(member: MemberProfile) {
   if (member.isOwner) return "#f5c451";
@@ -76,7 +75,7 @@ export function CommunityMembersModal({ communityId, communityName, currentUserI
       <div className={styles.body}>
         {tab === "members" && <div className={styles.memberList}>{orderedMembers.map((member) => { const shownStatus = member.online ? member.presence_status ?? "online" : "invisible"; return <article key={member.id} className={styles.memberRow} onClick={() => onViewProfile(member)}>
           <div className={styles.avatar} style={{ backgroundColor: member.accent_color, backgroundImage: member.avatar_url ? `url(${member.avatar_url})` : undefined }}>{!member.avatar_url && member.display_name.slice(0, 2).toUpperCase()}<i className={styles[shownStatus] ?? styles.offline} /></div>
-          <div className={styles.memberIdentity}><strong style={{ color: memberRoleColor(member) }}>{member.display_name}{member.isOwner && <Crown size={14} />}</strong><small>@{member.username} · {presenceLabels[shownStatus]}</small><div>{member.roles?.map((role) => <span key={role.id} style={{ color: role.color }}>{role.name}</span>)}</div></div>
+          <div className={styles.memberIdentity}><strong style={{ color: memberRoleColor(member) }}>{member.display_name}{member.isOwner && <Crown size={14} />}</strong><small>@{member.username}</small><div>{member.roles?.map((role) => <span key={role.id} style={{ color: role.color }}>{role.name}</span>)}</div></div>
           <button className={styles.viewButton} aria-label={`Ver perfil de ${member.display_name}`}><Eye size={15} /></button>
           <MemberActions communityId={communityId} currentUserId={currentUserId} member={member} roles={roles} assignments={assignments} access={access} onChanged={onChanged} />
         </article>; })}</div>}

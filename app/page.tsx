@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { CommunityMemberRole, CommunityRole, Message as MessageRow, Profile } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction } from "@/app/actions/messages";
@@ -27,7 +27,6 @@ import { messageFromRow, type CommunityChannel, type CommunityMessage as Message
 import { EMPTY_COMMUNITY_ACCESS, resolveCommunityAccess } from "@/features/community/permissions";
 import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 import { extractFirstLink } from "@/lib/links";
-import { presenceLabels } from "@/lib/presence";
 
 const seedMessages: Message[] = [];
 type AppNotification = { id: string; author: string; text: string; communityId: string; channelId: string; channelName: string; createdAt: string; read: boolean };
@@ -102,6 +101,7 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [membersCollapsed, setMembersCollapsed] = useState(false);
   const voiceRef = useRef<string | null>(null);
   const watchingScreenRef = useRef<string | null>(null);
   const userRef = useRef<User | null>(null);
@@ -1479,7 +1479,7 @@ export default function Home() {
   if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
 
   return (
-    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${membersCollapsed ? "members-collapsed" : ""}`}>
       <aside className="server-rail" aria-label="Barra principal">
         <button className="server brand-server" aria-label="Início do FYNEX"><span>FYNEX</span></button>
         <div className="rail-divider" />
@@ -1494,6 +1494,7 @@ export default function Home() {
 
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
       {sidebarCollapsed && <button className="sidebar-reopen" onClick={() => setSidebarCollapsed(false)} aria-label="Mostrar canais"><PanelLeftOpen size={17} /></button>}
+      {membersCollapsed && <button className="members-reopen" onClick={() => setMembersCollapsed(false)} aria-label="Mostrar membros"><PanelRightOpen size={17} /></button>}
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
         <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className="community-dot" style={{ backgroundColor: activeCommunity.accent_color, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isOwner && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="sidebar-collapse" onClick={() => setSidebarCollapsed(true)} aria-label="Recolher canais" title="Recolher canais"><PanelLeftClose size={16} /></button><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
@@ -1531,7 +1532,7 @@ export default function Home() {
         {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceContext?.communityName} · {voiceName}</small></div><span className="voice-connection-actions">{voiceContext?.communityId !== activeCommunityId && <button onClick={() => void returnToCallCommunity()} aria-label="Voltar à comunidade da chamada" title="Voltar à comunidade da chamada"><MessageCircle size={14} /></button>}<button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></span></div>}
         <div className="user-panel">
           <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} /></Link>
-          <div className="user-copy"><strong style={{ color: memberNameColor(user.id, user.color) }}>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
+          <div className="user-copy"><strong style={{ color: memberNameColor(user.id, user.color) }}>{user.name}</strong></div>
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
           <button className={screenSharing ? "control-on screen-on" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()} aria-label={screenSharing ? "Parar transmissão de tela" : "Compartilhar tela"}>{screenSharing ? <Square size={14} /> : <MonitorUp size={15} />}</button>
@@ -1610,15 +1611,15 @@ export default function Home() {
       <aside className="members-panel">
         <div className="prototype-tag"><Radio size={11} /> {activeCommunity.name.toUpperCase()}</div>
         <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>{voiceChannel ? voiceName : "Canal de voz"}</strong><small>{voiceChannel ? `${currentVoiceMembers.length} na conversa` : "Entre para conversar em tempo real"}</small><button onClick={() => voiceChannel ? leaveVoice() : voiceChannels[0] && void joinVoice(voiceChannels[0].id)} disabled={!voiceChannels.length}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
-        <div className="members-heading"><h3><Users size={12} /> MEMBROS — {displayedCommunityMembers.length}</h3><button onClick={() => setMembersOpen(true)}>Ver todos</button></div>
-        {displayedCommunityMembers.map((member) => { const shownStatus = member.online ? member.presence_status ?? "online" : "invisible"; return <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} status={false} /><i className={`status-${shownStatus}`} /></div><div><strong style={{ color: memberNameColor(member.id, member.accent_color) }}>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>{presenceLabels[shownStatus]}</small></div></button>; })}
+        <div className="members-heading"><h3><Users size={12} /> MEMBROS — {displayedCommunityMembers.length}</h3><div><button onClick={() => setMembersOpen(true)}>Ver todos</button><button className="members-collapse" onClick={() => setMembersCollapsed(true)} aria-label="Recolher membros" title="Recolher membros"><PanelRightClose size={15} /></button></div></div>
+        {displayedCommunityMembers.map((member) => { const shownStatus = member.online ? member.presence_status ?? "online" : "invisible"; return <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} status={false} /><i className={`status-${shownStatus}`} /></div><div><strong style={{ color: memberNameColor(member.id, member.accent_color) }}>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>@{member.username}</small></div></button>; })}
       </aside>
       {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
       {channelModalType && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={channelModalType} onClose={() => setChannelModalType(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
       {editingChannel && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={editingChannel.type as "text" | "voice"} channel={editingChannel} onClose={() => setEditingChannel(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
       {connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onViewProfile={(profile) => setSelectedProfile(displayedCommunityMembers.find((member) => member.id === profile.id) ?? profile)} />}
       {membersOpen && <CommunityMembersModal communityId={activeCommunity.id} communityName={activeCommunity.name} currentUserId={user.id} members={displayedCommunityMembers} roles={communityRoles} assignments={memberRoleAssignments} access={currentAccess} onViewProfile={setSelectedProfile} onClose={() => setMembersOpen(false)} onChanged={() => void loadCommunityPeople(activeCommunity.id)} />}
-      {communitySettingsOpen && <CommunitySettingsModal community={activeCommunity} onClose={() => setCommunitySettingsOpen(false)} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} />}
+      {communitySettingsOpen && <CommunitySettingsModal community={activeCommunity} onClose={() => setCommunitySettingsOpen(false)} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onDeleted={() => { setCommunitySettingsOpen(false); void loadWorkspace(); }} />}
       {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}

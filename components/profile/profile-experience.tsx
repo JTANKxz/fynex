@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { ProfileForm } from "@/components/profile/profile-form";
 import { ProfileMediaEditor } from "@/components/profile/profile-media-editor";
 import { ProfileSongCard } from "@/components/profile/profile-song-card";
-import { presenceLabels } from "@/lib/presence";
+import { AccountDangerZone } from "@/components/profile/account-danger-zone";
 import { songFromProfile } from "@/lib/spotify";
 import type { Profile } from "@/lib/supabase/database.types";
 
@@ -36,7 +36,7 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
       <div className={`profile-cover ${profile.banner_url ? "has-image" : ""}`} style={profile.banner_url ? { backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,.08), rgba(0,0,0,.45)), url("${profile.banner_url}")` } : undefined} />
       <div className="profile-identity-row">
         <div className={`profile-avatar-large ${profile.avatar_url ? "has-image" : ""}`} style={profile.avatar_url ? { backgroundImage: `url("${profile.avatar_url}")` } : undefined}>{profile.avatar_url ? null : initials}<i className={`profile-presence status-${profile.presence_status}`} /></div>
-        <div><h1>{profile.display_name}</h1><strong>@{profile.username}</strong><span className={`profile-status-label status-${profile.presence_status}`}>{presenceLabels[profile.presence_status]}</span></div>
+        <div><h1>{profile.display_name}</h1><strong>@{profile.username}</strong></div>
         <button className="profile-edit-button" onClick={() => setEditing(true)}><Edit3 size={16} />Editar perfil</button>
       </div>
       <div className="profile-content-grid">
@@ -52,6 +52,7 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
         <header><div><span className="auth-eyebrow">PERSONALIZAÇÃO</span><h2 id="profile-edit-title">Editar seu perfil</h2><p>As mudanças aparecem no seu card e nas conversas.</p></div><button onClick={() => setEditing(false)} aria-label="Fechar"><X size={19} /></button></header>
         <ProfileMediaEditor profile={profile} onChanged={() => router.refresh()} />
         <ProfileForm profile={profile} onSaved={saved} onCancel={() => setEditing(false)} />
+        <AccountDangerZone />
       </section>
     </div>}
   </>;

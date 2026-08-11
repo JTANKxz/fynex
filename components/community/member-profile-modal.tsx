@@ -3,7 +3,6 @@
 import { AtSign, CalendarDays, Crown, ShieldCheck, X } from "lucide-react";
 import type { CommunityRole, Profile } from "@/lib/supabase/database.types";
 import { ProfileSongCard } from "@/components/profile/profile-song-card";
-import { presenceLabels } from "@/lib/presence";
 import { songFromProfile } from "@/lib/spotify";
 import styles from "./member-profile-modal.module.css";
 
@@ -24,7 +23,7 @@ export function MemberProfileModal({ profile, onClose }: { profile: MemberProfil
       <div className={styles.banner} style={profile.banner_url ? { backgroundImage: `linear-gradient(to bottom, transparent, rgba(4,3,7,.55)), url(${profile.banner_url})` } : undefined} />
       <div className={styles.identity}>
         <div className={styles.avatar} style={profile.avatar_url ? { backgroundImage: `url(${profile.avatar_url})` } : undefined}>{!profile.avatar_url && initials}<i className={styles[shownStatus]} /></div>
-        <div><div className={styles.nameLine}><h2>{profile.display_name}</h2>{profile.isOwner && <Crown size={17} aria-label="Criador da comunidade" />}</div><span><AtSign size={13} />{profile.username} · {presenceLabels[shownStatus]}</span></div>
+        <div><div className={styles.nameLine}><h2>{profile.display_name}</h2>{profile.isOwner && <Crown size={17} aria-label="Criador da comunidade" />}</div><span><AtSign size={13} />{profile.username}</span></div>
       </div>
       <div className={styles.content}>
         <section><h3>SOBRE MIM</h3><p>{profile.bio || "Este usuário ainda não escreveu uma descrição."}</p></section>

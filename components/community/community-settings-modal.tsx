@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { Camera, ImagePlus, LoaderCircle, Save, Trash2, Upload, X } from "lucide-react";
-import { updateCommunityAction } from "@/app/actions/community";
+import { deleteCommunityAction, updateCommunityAction } from "@/app/actions/community";
 import { removeCommunityMediaAction, saveCommunityMediaAction } from "@/app/actions/community-media";
 import { cropImageToWebp } from "@/lib/media/crop-image";
 import { uploadToImageKit, type ImageKitUploadToken } from "@/lib/media/imagekit-client";
@@ -30,10 +30,12 @@ async function prepareImage(file: File, kind: MediaKind) {
   return cropImageToWebp(file, { x: (size.width - width) / 2, y: (size.height - height) / 2, width, height }, kind);
 }
 
-export function CommunitySettingsModal({ community, onClose, onChanged }: { community: Community; onClose: () => void; onChanged: () => void }) {
+export function CommunitySettingsModal({ community, onClose, onChanged, onDeleted }: { community: Community; onClose: () => void; onChanged: () => void; onDeleted: () => void }) {
   const avatarInputId = useId();
   const bannerInputId = useId();
   const [state, action, pending] = useActionState(updateCommunityAction, {});
+  const [deleteState, deleteAction, deletePending] = useActionState(deleteCommunityAction, {});
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [color, setColor] = useState(community.accent_color);
   const [busy, setBusy] = useState<MediaKind | null>(null);
   const [progress, setProgress] = useState(0);
@@ -45,6 +47,10 @@ export function CommunitySettingsModal({ community, onClose, onChanged }: { comm
     notifiedSuccess.current = state.success;
     onChanged();
   }, [onChanged, state.success]);
+
+  useEffect(() => {
+    if (deleteState.success) onDeleted();
+  }, [deleteState.success, onDeleted]);
 
   const upload = async (kind: MediaKind, file?: File) => {
     if (!file) return;
@@ -98,6 +104,15 @@ export function CommunitySettingsModal({ community, onClose, onChanged }: { comm
         {state.error && <p className={`${styles.notice} ${styles.error}`}>{state.error}</p>}{state.success && <p className={`${styles.notice} ${styles.success}`}>{state.success}</p>}
         <button className={styles.save} disabled={pending}><Save size={15} />{pending ? "Salvando…" : "Salvar comunidade"}</button>
       </form>
+      <section className={styles.dangerZone}>
+        <div><strong>Excluir comunidade</strong><small>Mensagens, canais, cargos e convites serão apagados permanentemente.</small></div>
+        {!deleteOpen ? <button type="button" onClick={() => setDeleteOpen(true)}><Trash2 size={15} />Excluir comunidade</button> : <form action={deleteAction}>
+          <input type="hidden" name="communityId" value={community.id} />
+          <label>Digite <strong>{community.name}</strong> para confirmar<input name="confirmationName" autoComplete="off" required /></label>
+          {deleteState.error && <p className={`${styles.notice} ${styles.error}`}>{deleteState.error}</p>}
+          <div><button type="button" onClick={() => setDeleteOpen(false)}>Cancelar</button><button type="submit" disabled={deletePending}><Trash2 size={14} />{deletePending ? "Excluindo…" : "Excluir definitivamente"}</button></div>
+        </form>}
+      </section>
     </section>
   </div>;
 }

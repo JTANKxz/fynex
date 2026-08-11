@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { deleteImageKitFile } from "@/lib/media/imagekit-server";
 import { createClient } from "@/lib/supabase/server";
 
 const communitySchema = z.object({
@@ -75,6 +76,46 @@ export async function updateCommunityAction(_state: CommunityActionState, formDa
   if (error || !community) return { error: "Somente o criador pode editar esta comunidade." };
   revalidatePath("/");
   return { success: "Comunidade atualizada.", communityId: community.id };
+}
+
+const deleteCommunitySchema = z.object({
+  communityId: z.uuid(),
+  confirmationName: z.string().trim().min(2).max(50),
+});
+
+export async function deleteCommunityAction(_state: CommunityActionState, formData: FormData): Promise<CommunityActionState> {
+  const parsed = deleteCommunitySchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Digite o nome da comunidade para confirmar." };
+
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  const userId = data?.claims?.sub;
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { data: community } = await supabase.from("communities")
+    .select("id, name, owner_id, avatar_file_id, banner_file_id")
+    .eq("id", parsed.data.communityId)
+    .maybeSingle();
+  if (!community || community.owner_id !== userId) return { error: "Somente o criador pode excluir esta comunidade." };
+  if (parsed.data.confirmationName !== community.name) return { error: "O nome digitado não corresponde à comunidade." };
+
+  const { data: channels } = await supabase.from("channels").select("id").eq("community_id", community.id);
+  const channelIds = channels?.map((channel) => channel.id) ?? [];
+  const { data: attachments } = channelIds.length
+    ? await supabase.from("messages").select("attachment_file_id").in("channel_id", channelIds).not("attachment_file_id", "is", null)
+    : { data: [] as { attachment_file_id: string | null }[] };
+
+  const { data: deleted, error } = await supabase.from("communities").delete()
+    .eq("id", community.id)
+    .eq("owner_id", userId)
+    .select("id")
+    .maybeSingle();
+  if (error || !deleted) return { error: "Não foi possível excluir a comunidade." };
+
+  const mediaIds = new Set([community.avatar_file_id, community.banner_file_id, ...(attachments ?? []).map((item) => item.attachment_file_id)].filter((value): value is string => Boolean(value)));
+  await Promise.allSettled([...mediaIds].map((fileId) => deleteImageKitFile(fileId)));
+  revalidatePath("/");
+  return { success: "Comunidade excluída.", communityId: community.id };
 }
 
 export type ChannelActionState = { error?: string; channelId?: string; channelType?: "text" | "voice" };

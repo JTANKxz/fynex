@@ -23,14 +23,14 @@ export type Database = {
         ];
       };
       community_roles: {
-        Row: { id: string; community_id: string; name: string; color: string; position: number; is_admin: boolean; manage_channels: boolean; manage_roles: boolean; manage_messages: boolean; manage_members: boolean; created_by: string; created_at: string; updated_at: string };
-        Insert: { id?: string; community_id: string; name: string; color?: string; position?: number; is_admin?: boolean; manage_channels?: boolean; manage_roles?: boolean; manage_messages?: boolean; manage_members?: boolean; created_by: string; created_at?: string; updated_at?: string };
-        Update: { name?: string; color?: string; position?: number; is_admin?: boolean; manage_channels?: boolean; manage_roles?: boolean; manage_messages?: boolean; manage_members?: boolean; updated_at?: string };
+        Row: { id: string; community_id: string; name: string; color: string; position: number; is_admin: boolean; manage_channels: boolean; manage_roles: boolean; manage_messages: boolean; manage_members: boolean; created_by: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; community_id: string; name: string; color?: string; position?: number; is_admin?: boolean; manage_channels?: boolean; manage_roles?: boolean; manage_messages?: boolean; manage_members?: boolean; created_by?: string | null; created_at?: string; updated_at?: string };
+        Update: { name?: string; color?: string; position?: number; is_admin?: boolean; manage_channels?: boolean; manage_roles?: boolean; manage_messages?: boolean; manage_members?: boolean; created_by?: string | null; updated_at?: string };
         Relationships: [];
       };
       community_member_roles: {
-        Row: { community_id: string; user_id: string; role_id: string; assigned_by: string; assigned_at: string };
-        Insert: { community_id: string; user_id: string; role_id: string; assigned_by: string; assigned_at?: string };
+        Row: { community_id: string; user_id: string; role_id: string; assigned_by: string | null; assigned_at: string };
+        Insert: { community_id: string; user_id: string; role_id: string; assigned_by?: string | null; assigned_at?: string };
         Update: Record<string, never>;
         Relationships: [];
       };
@@ -69,7 +69,9 @@ export type Database = {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      delete_current_account: { Args: Record<PropertyKey, never>; Returns: boolean };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };
