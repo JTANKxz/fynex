@@ -73,12 +73,14 @@ export default function Home() {
   const [selectedAudioInput, setSelectedAudioInput] = useState("");
   const [noiseSuppression, setNoiseSuppression] = useState(() => typeof window === "undefined" ? true : window.localStorage.getItem("fynex:noise-cancellation") !== "off");
   const [noiseSuppressionSupported] = useState(() => typeof navigator === "undefined" || navigator.mediaDevices?.getSupportedConstraints().noiseSuppression === true);
+  const [noiseSuppressionApplied, setNoiseSuppressionApplied] = useState<boolean | null>(null);
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [screenPreset, setScreenPreset] = useState<ScreenPreset>("standard");
   const [audioTrackVersion, setAudioTrackVersion] = useState(0);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
+  const [locallyMutedUsers, setLocallyMutedUsers] = useState<Set<string>>(() => new Set());
   const [speaking, setSpeaking] = useState(false);
   const [micError, setMicError] = useState("");
   const [realtimeError, setRealtimeError] = useState("");
@@ -815,6 +817,33 @@ export default function Home() {
     return () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
   }, [voiceChannel, muted, user, post, audioTrackVersion]);
 
+  const captureMicrophone = async (
+    deviceId = selectedAudioInput,
+    processing: Partial<Record<"noiseSuppression" | "echoCancellation" | "autoGainControl", boolean>> = {},
+  ) => {
+    const supported = navigator.mediaDevices.getSupportedConstraints();
+    const requestedNoiseSuppression = processing.noiseSuppression ?? noiseSuppression;
+    const requestedEchoCancellation = processing.echoCancellation ?? echoCancellation;
+    const requestedAutoGainControl = processing.autoGainControl ?? autoGainControl;
+    const constraints = (strictNoiseSuppression: boolean): MediaTrackConstraints => ({
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      ...(supported.echoCancellation ? { echoCancellation: { ideal: requestedEchoCancellation } } : {}),
+      ...(supported.noiseSuppression
+        ? { noiseSuppression: strictNoiseSuppression ? { exact: requestedNoiseSuppression } : { ideal: requestedNoiseSuppression } }
+        : {}),
+      ...(supported.autoGainControl ? { autoGainControl: { ideal: requestedAutoGainControl } } : {}),
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48_000 },
+    });
+
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: constraints(true) });
+    } catch (error) {
+      if (!(error instanceof DOMException) || error.name !== "OverconstrainedError" || !supported.noiseSuppression) throw error;
+      return navigator.mediaDevices.getUserMedia({ audio: constraints(false) });
+    }
+  };
+
   const joinVoice = async (channel: string) => {
     if (voiceChannel === channel) return;
     if (!realtime.current) {
@@ -831,15 +860,13 @@ export default function Home() {
     }
     setMicError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          ...(selectedAudioInput ? { deviceId: { exact: selectedAudioInput } } : {}),
-          echoCancellation,
-          noiseSuppression,
-          autoGainControl,
-        },
-      });
+      const stream = await captureMicrophone();
       localStream.current = stream;
+      const appliedNoiseSuppression = stream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null;
+      setNoiseSuppressionApplied(appliedNoiseSuppression);
+      if (noiseSuppression && appliedNoiseSuppression === false) {
+        setMicError("O microfone foi conectado, mas este navegador não aplicou o cancelamento de ruído.");
+      }
       const activeDeviceId = stream.getAudioTracks()[0]?.getSettings().deviceId;
       if (activeDeviceId) setSelectedAudioInput(activeDeviceId);
       await refreshAudioInputs();
@@ -868,6 +895,7 @@ export default function Home() {
     pendingIceCandidates.current.clear();
     localStream.current?.getTracks().forEach((track) => track.stop());
     localStream.current = null;
+    setNoiseSuppressionApplied(null);
     voiceRef.current = null;
     setVoiceChannel(null);
     setVoicePeers({});
@@ -893,14 +921,7 @@ export default function Home() {
     if (!voiceRef.current) return;
     setMicError("");
     try {
-      const replacementStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: { exact: deviceId },
-          echoCancellation,
-          noiseSuppression,
-          autoGainControl,
-        },
-      });
+      const replacementStream = await captureMicrophone(deviceId);
       const replacementTrack = replacementStream.getAudioTracks()[0];
       if (!replacementTrack) throw new Error("Microfone sem faixa de áudio");
       await Promise.all(
@@ -912,6 +933,11 @@ export default function Home() {
       localStream.current?.getTracks().forEach((track) => track.stop());
       replacementTrack.enabled = !muted;
       localStream.current = replacementStream;
+      const appliedNoiseSuppression = replacementTrack.getSettings().noiseSuppression ?? null;
+      setNoiseSuppressionApplied(appliedNoiseSuppression);
+      if (noiseSuppression && appliedNoiseSuppression === false) {
+        setMicError("O microfone foi trocado, mas este navegador não aplicou o cancelamento de ruído.");
+      }
       setAudioTrackVersion((version) => version + 1);
     } catch {
       setMicError("Não foi possível trocar o microfone.");
@@ -930,13 +956,41 @@ export default function Home() {
     setMicError("");
     try {
       await track.applyConstraints({
-        noiseSuppression: setting === "noiseSuppression" ? enabled : noiseSuppression,
-        echoCancellation: setting === "echoCancellation" ? enabled : echoCancellation,
-        autoGainControl: setting === "autoGainControl" ? enabled : autoGainControl,
+        noiseSuppression: { exact: setting === "noiseSuppression" ? enabled : noiseSuppression },
+        echoCancellation: { ideal: setting === "echoCancellation" ? enabled : echoCancellation },
+        autoGainControl: { ideal: setting === "autoGainControl" ? enabled : autoGainControl },
       });
+      setNoiseSuppressionApplied(track.getSettings().noiseSuppression ?? null);
     } catch {
-      setMicError("Seu navegador não conseguiu aplicar esse ajuste ao microfone.");
+      try {
+        const replacementStream = await captureMicrophone(selectedAudioInput, { [setting]: enabled });
+        const replacementTrack = replacementStream.getAudioTracks()[0];
+        if (!replacementTrack) throw new Error("Microfone sem faixa de audio");
+        await Promise.all(
+          [...peers.current.values()].map(async (peer) => {
+            const sender = peer.getSenders().find((item) => item.track?.kind === "audio");
+            if (sender) await sender.replaceTrack(replacementTrack);
+          }),
+        );
+        localStream.current?.getTracks().forEach((currentTrack) => currentTrack.stop());
+        replacementTrack.enabled = !muted;
+        localStream.current = replacementStream;
+        setNoiseSuppressionApplied(replacementTrack.getSettings().noiseSuppression ?? null);
+        setAudioTrackVersion((version) => version + 1);
+      } catch {
+        if (setting === "noiseSuppression") setNoiseSuppressionApplied(false);
+        setMicError("Seu navegador não conseguiu aplicar esse ajuste ao microfone.");
+      }
     }
+  };
+
+  const toggleLocalMute = (userId: string) => {
+    setLocallyMutedUsers((current) => {
+      const next = new Set(current);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
   };
 
   const chooseAttachment = (file?: File) => {
@@ -1178,7 +1232,8 @@ export default function Home() {
                     const peer = voicePeers[member.id];
                     const memberSpeaking = isCurrentUser ? speaking : !!peer?.speaking;
                     const memberMuted = isCurrentUser ? muted : (peer?.muted ?? member.muted ?? false);
-                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span style={{ color: memberNameColor(member.id, member.color) }}>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
+                    const locallyMuted = locallyMutedUsers.has(member.id);
+                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""} ${locallyMuted ? "locally-muted" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span style={{ color: memberNameColor(member.id, member.color) }}>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{locallyMuted ? "silenciado para você" : peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <button className="local-mute-button" onClick={() => toggleLocalMute(member.id)} aria-label={locallyMuted ? `Ouvir ${member.name}` : `Silenciar ${member.name} somente para você`} title={locallyMuted ? "Voltar a ouvir" : "Silenciar para mim"}>{locallyMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}</button>}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened || locallyMuted} />}</div>;
                   })}
                 </div>}
               </div>;
@@ -1273,7 +1328,7 @@ export default function Home() {
       {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}
-      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} noiseSuppressionSupported={noiseSuppressionSupported} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
+      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} noiseSuppressionSupported={noiseSuppressionSupported} noiseSuppressionApplied={noiseSuppressionApplied} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
     </main>
   );
 }
