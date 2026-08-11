@@ -68,7 +68,8 @@ export default function Home() {
   const [onlineUsers, setOnlineUsers] = useState<Record<string, PresenceUser>>({});
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioInput, setSelectedAudioInput] = useState("");
-  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [noiseSuppression, setNoiseSuppression] = useState(() => typeof window === "undefined" ? true : window.localStorage.getItem("fynex:noise-cancellation") !== "off");
+  const [noiseSuppressionSupported] = useState(() => typeof navigator === "undefined" || navigator.mediaDevices?.getSupportedConstraints().noiseSuppression === true);
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [screenPreset, setScreenPreset] = useState<ScreenPreset>("standard");
@@ -915,11 +916,15 @@ export default function Home() {
   };
 
   const updateAudioProcessing = async (setting: "noiseSuppression" | "echoCancellation" | "autoGainControl", enabled: boolean) => {
-    if (setting === "noiseSuppression") setNoiseSuppression(enabled);
+    if (setting === "noiseSuppression") {
+      setNoiseSuppression(enabled);
+      window.localStorage.setItem("fynex:noise-cancellation", enabled ? "on" : "off");
+    }
     if (setting === "echoCancellation") setEchoCancellation(enabled);
     if (setting === "autoGainControl") setAutoGainControl(enabled);
     const track = localStream.current?.getAudioTracks()[0];
     if (!track) return;
+    setMicError("");
     try {
       await track.applyConstraints({
         noiseSuppression: setting === "noiseSuppression" ? enabled : noiseSuppression,
@@ -1260,7 +1265,7 @@ export default function Home() {
       {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}
-      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
+      {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} noiseSuppressionSupported={noiseSuppressionSupported} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
     </main>
   );
 }
