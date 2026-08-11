@@ -13,6 +13,7 @@ import { CreateChannelModal } from "@/components/community/create-channel-modal"
 import { CreateCommunityModal } from "@/components/community/create-community-modal";
 import { ConnectionsModal, type ConnectionsTab } from "@/components/community/connections-modal";
 import { CommunityMembersModal } from "@/components/community/community-members-modal";
+import { CommunitySettingsModal } from "@/components/community/community-settings-modal";
 import { MemberProfileModal, type MemberProfile } from "@/components/community/member-profile-modal";
 import { MessageActionsMenu, type MessageMenuState } from "@/components/community/message-actions-menu";
 import { MessageAttachment } from "@/components/community/message-attachment";
@@ -41,6 +42,7 @@ export default function Home() {
   const [editingChannel, setEditingChannel] = useState<CommunityChannel | null>(null);
   const [connectionsTab, setConnectionsTab] = useState<ConnectionsTab | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [communitySettingsOpen, setCommunitySettingsOpen] = useState(false);
   const [communityMembers, setCommunityMembers] = useState<MemberProfile[]>([]);
   const [communityRoles, setCommunityRoles] = useState<CommunityRole[]>([]);
   const [memberRoleAssignments, setMemberRoleAssignments] = useState<CommunityMemberRole[]>([]);
@@ -78,6 +80,7 @@ export default function Home() {
   const [realtimeError, setRealtimeError] = useState("");
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [mentionNotice, setMentionNotice] = useState<{ author: string; channelId: string; channelName: string } | null>(null);
+  const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; channelId: string }>>({});
   const [sending, setSending] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const voiceRef = useRef<string | null>(null);
@@ -96,8 +99,16 @@ export default function Home() {
   const ownMessageIds = useRef<Set<string>>(new Set());
   const highlightTimer = useRef<number | null>(null);
   const activeChannelRef = useRef<string | null>(null);
+  const typingSentAt = useRef(0);
+  const typingStopTimer = useRef<number | null>(null);
+  const remoteTypingTimers = useRef<Map<string, number>>(new Map());
 
   useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
+  useEffect(() => () => {
+    if (typingStopTimer.current) window.clearTimeout(typingStopTimer.current);
+    remoteTypingTimers.current.forEach((timer) => window.clearTimeout(timer));
+    remoteTypingTimers.current.clear();
+  }, []);
 
   const loadCommunityPeople = useCallback(async (communityId: string) => {
     const [membersResult, rolesResult, assignmentsResult] = await Promise.all([
@@ -583,6 +594,25 @@ export default function Home() {
         setMentionNotice({ author: mention.author ?? "Um administrador", channelId: mention.channelId, channelName: mention.channelName ?? "canal" });
         if (mention.channelId !== activeChannelRef.current) playSound(receivedMessageSound.current);
       })
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        const typing = payload as { userId?: string; name?: string; channelId?: string; active?: boolean };
+        if (!typing.userId || !typing.channelId || typing.userId === user.id) return;
+        const previousTimer = remoteTypingTimers.current.get(typing.userId);
+        if (previousTimer) window.clearTimeout(previousTimer);
+        if (!typing.active) {
+          setTypingUsers((current) => { const next = { ...current }; delete next[typing.userId!]; return next; });
+          return;
+        }
+        setTypingUsers((current) => ({ ...current, [typing.userId!]: { name: typing.name ?? "Alguém", channelId: typing.channelId! } }));
+        remoteTypingTimers.current.set(typing.userId, window.setTimeout(() => {
+          setTypingUsers((current) => { const next = { ...current }; delete next[typing.userId!]; return next; });
+          remoteTypingTimers.current.delete(typing.userId!);
+        }, 2600));
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "communities", filter: `id=eq.${activeCommunityId}` }, ({ new: updated }) => {
+        const community = updated as CommunitySpace;
+        setCommunities((current) => current.map((item) => item.id === community.id ? community : item));
+      })
       .subscribe(async (status, error) => {
         if (disposed) return;
         if (status === "SUBSCRIBED") {
@@ -884,6 +914,9 @@ export default function Home() {
         await realtime.current?.send({ type: "broadcast", event: "mention-everyone", payload: { authorId: user.id, author: user.name, channelId: activeChannel, channelName: currentChannel.name } });
       }
       playSound(sentMessageSound.current);
+      await realtime.current?.send({ type: "broadcast", event: "typing", payload: { userId: user.id, name: user.name, channelId: activeChannel, active: false } });
+      if (typingStopTimer.current) window.clearTimeout(typingStopTimer.current);
+      typingSentAt.current = 0;
       setDraft("");
       setReplyTarget(null);
       setAttachment(null);
@@ -910,6 +943,13 @@ export default function Home() {
   const currentAccess = activeCommunity && user
     ? resolveCommunityAccess(activeCommunity.owner_id, user.id, communityRoles, memberRoleAssignments)
     : EMPTY_COMMUNITY_ACCESS;
+  const memberNameColors = new Map(displayedCommunityMembers.map((member) => {
+    const highestRole = member.roles?.reduce<CommunityRole | null>((highest, role) => !highest || role.position > highest.position ? role : highest, null);
+    return [member.id, member.isOwner ? activeCommunity?.accent_color ?? member.accent_color : highestRole?.color ?? member.accent_color];
+  }));
+  const memberNameColor = (memberId: string, fallback: string) => memberNameColors.get(memberId) ?? fallback;
+  const mentionMembers = displayedCommunityMembers.map((member) => ({ ...member, accent_color: memberNameColor(member.id, member.accent_color) }));
+  const activeTypingNames = Object.values(typingUsers).filter((typing) => typing.channelId === activeChannel).map((typing) => typing.name);
   const getVoiceMembers = (channelId: string) => {
     const members = Object.values(voiceMembers)
       .filter((member) => member.voiceChannel === channelId)
@@ -951,6 +991,25 @@ export default function Home() {
     const mention = `@${member?.username ?? message.author.toLowerCase().replace(/[^a-z0-9_]/g, "_")} `;
     setDraft((current) => current.includes(mention.trim()) ? current : `${current}${current && !current.endsWith(" ") ? " " : ""}${mention}`);
     setMessageMenu(null);
+  };
+
+  const handleDraftChange = (value: string) => {
+    setDraft(value);
+    if (!user || !activeChannel) return;
+    const sendTyping = (active: boolean) => void realtime.current?.send({ type: "broadcast", event: "typing", payload: { userId: user.id, name: user.name, channelId: activeChannel, active } });
+    if (!value.trim()) {
+      sendTyping(false);
+      typingSentAt.current = 0;
+      if (typingStopTimer.current) window.clearTimeout(typingStopTimer.current);
+      return;
+    }
+    const now = Date.now();
+    if (now - typingSentAt.current > 1200) {
+      sendTyping(true);
+      typingSentAt.current = now;
+    }
+    if (typingStopTimer.current) window.clearTimeout(typingStopTimer.current);
+    typingStopTimer.current = window.setTimeout(() => { sendTyping(false); typingSentAt.current = 0; }, 1800);
   };
 
   const jumpToMessage = async (messageId: string) => {
@@ -996,7 +1055,7 @@ export default function Home() {
       <aside className="server-rail" aria-label="Barra principal">
         <button className="server brand-server" aria-label="Início do FYNEX"><span>FYNEX</span></button>
         <div className="rail-divider" />
-        {communities.map((community) => <button key={community.id} className={`server community-server ${community.id === activeCommunityId ? "active" : ""}`} style={{ background: community.id === activeCommunityId ? community.accent_color : undefined }} onClick={() => void selectCommunity(community.id)} aria-label={community.name} title={community.name}><span>{community.name.slice(0, 2).toUpperCase()}</span><i /></button>)}
+        {communities.map((community) => <button key={community.id} className={`server community-server ${community.id === activeCommunityId ? "active" : ""}`} style={{ backgroundColor: community.id === activeCommunityId ? community.accent_color : undefined, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }} onClick={() => void selectCommunity(community.id)} aria-label={community.name} title={community.name}><span>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span><i /></button>)}
         <button className="server add-server" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade" title="Criar comunidade"><Plus size={18} /></button>
         <div className="community-badge"><Radio size={14} /><span>{activeCommunity.name}</span></div>
         <div className="rail-spacer" />
@@ -1008,7 +1067,7 @@ export default function Home() {
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <header className="community-header"><div><span className="community-dot" style={{ background: activeCommunity.accent_color }}>{activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></header>
+        <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className="community-dot" style={{ backgroundColor: activeCommunity.accent_color, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isOwner && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
         <div className="invite-card"><UserPlus size={15} /><div><strong>Convide alguém</strong><small>Amigos, convites e entrada</small></div><button onClick={() => setConnectionsTab("community")}>Gerenciar</button></div>
         <nav className="channel-nav">
           <section>
@@ -1027,7 +1086,7 @@ export default function Home() {
                     const peer = voicePeers[member.id];
                     const memberSpeaking = isCurrentUser ? speaking : !!peer?.speaking;
                     const memberMuted = isCurrentUser ? muted : (peer?.muted ?? member.muted ?? false);
-                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
+                    return <div className={`voice-user ${memberSpeaking ? "speaking" : ""}`} key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} small status={false} /><span style={{ color: memberNameColor(member.id, member.color) }}>{member.name}{isCurrentUser ? " (você)" : ""}</span>{!isCurrentUser && <small className={peer?.stream ? "audio-ready" : ""}>{peer?.stream ? "áudio ativo" : "conectando"}</small>}{memberMuted && <MicOff size={12} />}{!isCurrentUser && <RemoteAudio stream={peer?.stream} muted={deafened} />}</div>;
                   })}
                 </div>}
               </div>;
@@ -1038,7 +1097,7 @@ export default function Home() {
         {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC + Supabase</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
         <div className="user-panel">
           <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} /></Link>
-          <div className="user-copy"><strong>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
+          <div className="user-copy"><strong style={{ color: memberNameColor(user.id, user.color) }}>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
           <button className={screenSharing ? "control-on screen-on" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()} aria-label={screenSharing ? "Parar transmissão de tela" : "Compartilhar tela"}>{screenSharing ? <Square size={14} /> : <MonitorUp size={15} />}</button>
@@ -1093,7 +1152,7 @@ export default function Home() {
             const repliedMessage = message.replyToId ? visibleMessages.find((item) => item.id === message.replyToId) ?? replySnapshots[message.replyToId] : undefined;
             return <article id={`message-${message.id}`} className={`message ${grouped ? "grouped" : ""} ${highlightedMessageId === message.id ? "message-highlighted" : ""}`} key={message.id} onContextMenu={(event) => { event.preventDefault(); setMessageMenu({ message, x: event.clientX, y: event.clientY }); }}>
               {!grouped && <button className="message-profile-trigger avatar-trigger" onClick={() => openMemberProfile(message.authorId)} aria-label={`Ver perfil de ${message.author}`}><Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} /></button>}
-              <div>{message.replyToId && <MessageReplyPreview message={repliedMessage} missing={!repliedMessage} onJump={() => void jumpToMessage(message.replyToId!)} />}{!grouped && <header><button className="message-profile-trigger" style={{ color: message.color }} onClick={() => openMemberProfile(message.authorId)}>{message.author}</button><time>{message.time}</time></header>}
+              <div>{message.replyToId && <MessageReplyPreview message={repliedMessage} missing={!repliedMessage} onJump={() => void jumpToMessage(message.replyToId!)} />}{!grouped && <header><button className="message-profile-trigger" style={{ color: memberNameColor(message.authorId, message.color) }} onClick={() => openMemberProfile(message.authorId)}>{message.author}</button><time>{message.time}</time></header>}
                 {message.content && <p><MessageMentionText content={message.content} members={displayedCommunityMembers} onProfile={setSelectedProfile} /></p>}
                 {message.attachment ? <MessageAttachment attachment={message.attachment} /> : null}
               </div>
@@ -1101,21 +1160,23 @@ export default function Home() {
             </article>;
           })}
         </div>
+        {activeTypingNames.length > 0 && <div className="typing-indicator"><i><span /><span /><span /></i><strong>{activeTypingNames.length === 1 ? activeTypingNames[0] : activeTypingNames.length === 2 ? `${activeTypingNames[0]} e ${activeTypingNames[1]}` : `${activeTypingNames[0]}, ${activeTypingNames[1]} e mais ${activeTypingNames.length - 2}`}</strong><small>{activeTypingNames.length === 1 ? "está digitando…" : "estão digitando…"}</small></div>}
         {replyTarget && <ReplyComposerPreview message={replyTarget} onClose={() => setReplyTarget(null)} />}
-        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} members={displayedCommunityMembers} canMentionEveryone={currentAccess.isAdmin} onAttachment={chooseAttachment} onDraft={setDraft} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
+        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} members={mentionMembers} canMentionEveryone={currentAccess.isAdmin} onAttachment={chooseAttachment} onDraft={handleDraftChange} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
       </section>
 
       <aside className="members-panel">
         <div className="prototype-tag"><Radio size={11} /> {activeCommunity.name.toUpperCase()}</div>
         <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>{voiceChannel ? voiceName : "Canal de voz"}</strong><small>{voiceChannel ? `${currentVoiceMembers.length} na conversa` : "Entre para conversar em tempo real"}</small><button onClick={() => voiceChannel ? leaveVoice() : voiceChannels[0] && void joinVoice(voiceChannels[0].id)} disabled={!voiceChannels.length}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
         <div className="members-heading"><h3><Users size={12} /> MEMBROS — {displayedCommunityMembers.length}</h3><button onClick={() => setMembersOpen(true)}>Ver todos</button></div>
-        {displayedCommunityMembers.map((member) => <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} /><i className={member.online ? "online" : "offline"} /></div><div><strong>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>{member.online ? "Online agora" : "Offline"}</small></div></button>)}
+        {displayedCommunityMembers.map((member) => <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} /><i className={member.online ? "online" : "offline"} /></div><div><strong style={{ color: memberNameColor(member.id, member.accent_color) }}>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>{member.online ? "Online agora" : "Offline"}</small></div></button>)}
       </aside>
       {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
       {channelModalType && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={channelModalType} onClose={() => setChannelModalType(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
       {editingChannel && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={editingChannel.type as "text" | "voice"} channel={editingChannel} onClose={() => setEditingChannel(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
       {connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onViewProfile={(profile) => setSelectedProfile(displayedCommunityMembers.find((member) => member.id === profile.id) ?? profile)} />}
       {membersOpen && <CommunityMembersModal communityId={activeCommunity.id} communityName={activeCommunity.name} currentUserId={user.id} members={displayedCommunityMembers} roles={communityRoles} assignments={memberRoleAssignments} access={currentAccess} onViewProfile={setSelectedProfile} onClose={() => setMembersOpen(false)} onChanged={() => void loadCommunityPeople(activeCommunity.id)} />}
+      {communitySettingsOpen && <CommunitySettingsModal community={activeCommunity} onClose={() => setCommunitySettingsOpen(false)} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} />}
       {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}

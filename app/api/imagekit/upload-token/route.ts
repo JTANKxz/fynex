@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type MediaKind = "avatar" | "banner" | "message-image" | "message-video";
+type MediaKind = "avatar" | "banner" | "community-avatar" | "community-banner" | "message-image" | "message-video";
 
 const MESSAGE_MIME = {
   "image/jpeg": { kind: "message-image", extension: "jpg", limit: 8_000_000 },
@@ -26,12 +26,13 @@ export async function POST(request: Request) {
   const userId = data?.claims?.sub;
   if (!userId) return Response.json({ error: "Sessão inválida." }, { status: 401 });
 
-  const body = await request.json().catch(() => null) as { kind?: MediaKind; mime?: string; channelId?: string } | null;
-  if (body?.kind !== "avatar" && body?.kind !== "banner" && body?.kind !== "message-image" && body?.kind !== "message-video") {
+  const body = await request.json().catch(() => null) as { kind?: MediaKind; mime?: string; channelId?: string; communityId?: string } | null;
+  if (body?.kind !== "avatar" && body?.kind !== "banner" && body?.kind !== "community-avatar" && body?.kind !== "community-banner" && body?.kind !== "message-image" && body?.kind !== "message-video") {
     return Response.json({ error: "Tipo de imagem inválido." }, { status: 400 });
   }
 
   const isMessage = body.kind === "message-image" || body.kind === "message-video";
+  const isCommunity = body.kind === "community-avatar" || body.kind === "community-banner";
   const media = body.mime ? MESSAGE_MIME[body.mime as keyof typeof MESSAGE_MIME] : undefined;
   if (isMessage && (!media || media.kind !== body.kind || !body.channelId)) {
     return Response.json({ error: "Formato de anexo inválido." }, { status: 400 });
@@ -39,6 +40,11 @@ export async function POST(request: Request) {
   if (isMessage) {
     const { data: channel } = await supabase.from("channels").select("id").eq("id", body.channelId!).eq("type", "text").maybeSingle();
     if (!channel) return Response.json({ error: "Você não pode enviar arquivos neste canal." }, { status: 403 });
+  }
+  if (isCommunity) {
+    if (!body.communityId) return Response.json({ error: "Comunidade inválida." }, { status: 400 });
+    const { data: community } = await supabase.from("communities").select("id").eq("id", body.communityId).eq("owner_id", userId).maybeSingle();
+    if (!community) return Response.json({ error: "Somente o criador pode alterar as imagens da comunidade." }, { status: 403 });
   }
 
   const publicKey = process.env.IMAGEKIT_PUBLIC_KEY;
@@ -48,10 +54,10 @@ export async function POST(request: Request) {
   }
 
   const fileName = `${body.kind}-${randomUUID()}.${media?.extension ?? "webp"}`;
-  const folder = isMessage ? `/fynex/users/${userId}/messages` : `/fynex/users/${userId}`;
-  const checks = body.kind === "avatar"
+  const folder = isMessage ? `/fynex/users/${userId}/messages` : isCommunity ? `/fynex/communities/${body.communityId}` : `/fynex/users/${userId}`;
+  const checks = body.kind === "avatar" || body.kind === "community-avatar"
     ? "'file.size' <= '400KB' AND 'file.mime' = 'image/webp' AND 'mediaMetadata.width' = 512 AND 'mediaMetadata.height' = 512"
-    : body.kind === "banner"
+    : body.kind === "banner" || body.kind === "community-banner"
       ? "'file.size' <= '900KB' AND 'file.mime' = 'image/webp' AND 'mediaMetadata.width' = 1600 AND 'mediaMetadata.height' = 500"
       : `'file.size' <= ${media!.limit} AND 'file.mime' = '${body.mime}'`;
   const issuedAt = Math.floor(Date.now() / 1000);

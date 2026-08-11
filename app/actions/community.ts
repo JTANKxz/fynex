@@ -17,7 +17,7 @@ const channelSchema = z.object({
   userLimit: z.coerce.number().int().min(1).max(10).optional(),
 });
 
-export type CommunityActionState = { error?: string; communityId?: string };
+export type CommunityActionState = { error?: string; success?: string; communityId?: string };
 
 export async function createCommunityAction(_state: CommunityActionState, formData: FormData): Promise<CommunityActionState> {
   const parsed = communitySchema.safeParse(Object.fromEntries(formData));
@@ -55,6 +55,26 @@ export async function createCommunityAction(_state: CommunityActionState, formDa
 
   revalidatePath("/");
   return { communityId: community.id };
+}
+
+const updateCommunitySchema = communitySchema.extend({ communityId: z.uuid() });
+
+export async function updateCommunityAction(_state: CommunityActionState, formData: FormData): Promise<CommunityActionState> {
+  const parsed = updateCommunitySchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Confira o nome, a descrição e a cor." };
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  const userId = data?.claims?.sub;
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { data: community, error } = await supabase.from("communities").update({
+    name: parsed.data.name,
+    description: parsed.data.description,
+    accent_color: parsed.data.accentColor,
+  }).eq("id", parsed.data.communityId).eq("owner_id", userId).select("id").maybeSingle();
+  if (error || !community) return { error: "Somente o criador pode editar esta comunidade." };
+  revalidatePath("/");
+  return { success: "Comunidade atualizada.", communityId: community.id };
 }
 
 export type ChannelActionState = { error?: string; channelId?: string; channelType?: "text" | "voice" };

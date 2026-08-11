@@ -8,9 +8,9 @@ export type Database = {
         Relationships: [];
       };
       communities: {
-        Row: { id: string; name: string; description: string; owner_id: string; accent_color: string; join_policy: string; discoverable: boolean; created_at: string; updated_at: string };
-        Insert: { id?: string; name: string; description?: string; owner_id: string; accent_color?: string; join_policy?: string; discoverable?: boolean; created_at?: string; updated_at?: string };
-        Update: { name?: string; description?: string; owner_id?: string; accent_color?: string; join_policy?: string; discoverable?: boolean; updated_at?: string };
+        Row: { id: string; name: string; description: string; owner_id: string; accent_color: string; avatar_url: string | null; avatar_file_id: string | null; banner_url: string | null; banner_file_id: string | null; join_policy: string; discoverable: boolean; created_at: string; updated_at: string };
+        Insert: { id?: string; name: string; description?: string; owner_id: string; accent_color?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; join_policy?: string; discoverable?: boolean; created_at?: string; updated_at?: string };
+        Update: { name?: string; description?: string; owner_id?: string; accent_color?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; join_policy?: string; discoverable?: boolean; updated_at?: string };
         Relationships: [{ foreignKeyName: "communities_owner_id_fkey"; columns: ["owner_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }];
       };
       community_members: {

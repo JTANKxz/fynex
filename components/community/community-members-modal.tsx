@@ -8,6 +8,11 @@ import type { CommunityAccess } from "@/features/community/permissions";
 import type { MemberProfile } from "./member-profile-modal";
 import styles from "./community-members-modal.module.css";
 
+function memberRoleColor(member: MemberProfile) {
+  if (member.isOwner) return "#f5c451";
+  return member.roles?.reduce<CommunityRole | null>((highest, role) => !highest || role.position > highest.position ? role : highest, null)?.color;
+}
+
 function MemberActions({ communityId, currentUserId, member, roles, assignments, access, onChanged }: { communityId: string; currentUserId: string; member: MemberProfile; roles: CommunityRole[]; assignments: CommunityMemberRole[]; access: CommunityAccess; onChanged: () => void }) {
   const [roleState, roleAction, rolePending] = useActionState(changeMemberRoleAction, {});
   const [removeState, removeAction, removePending] = useActionState(removeCommunityMemberAction, {});
@@ -70,7 +75,7 @@ export function CommunityMembersModal({ communityId, communityName, currentUserI
       <div className={styles.body}>
         {tab === "members" && <div className={styles.memberList}>{orderedMembers.map((member) => <article key={member.id} className={styles.memberRow} onClick={() => onViewProfile(member)}>
           <div className={styles.avatar} style={{ backgroundColor: member.accent_color, backgroundImage: member.avatar_url ? `url(${member.avatar_url})` : undefined }}>{!member.avatar_url && member.display_name.slice(0, 2).toUpperCase()}<i className={member.online ? styles.online : styles.offline} /></div>
-          <div className={styles.memberIdentity}><strong>{member.display_name}{member.isOwner && <Crown size={14} />}</strong><small>@{member.username} · {member.online ? "Online" : "Offline"}</small><div>{member.roles?.map((role) => <span key={role.id} style={{ color: role.color }}>{role.name}</span>)}</div></div>
+          <div className={styles.memberIdentity}><strong style={{ color: memberRoleColor(member) }}>{member.display_name}{member.isOwner && <Crown size={14} />}</strong><small>@{member.username} · {member.online ? "Online" : "Offline"}</small><div>{member.roles?.map((role) => <span key={role.id} style={{ color: role.color }}>{role.name}</span>)}</div></div>
           <button className={styles.viewButton} aria-label={`Ver perfil de ${member.display_name}`}><Eye size={15} /></button>
           <MemberActions communityId={communityId} currentUserId={currentUserId} member={member} roles={roles} assignments={assignments} access={access} onChanged={onChanged} />
         </article>)}</div>}
