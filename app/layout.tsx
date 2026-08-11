@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import "./globals.css";
+import "./theme-v3.css";
 
 export const metadata: Metadata = {
   title: { default: "FYNEX — encontre seu ritmo", template: "%s · FYNEX" },

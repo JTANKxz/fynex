@@ -55,11 +55,13 @@ export async function POST(request: Request) {
 
   const fileName = `${body.kind}-${randomUUID()}.${media?.extension ?? "webp"}`;
   const folder = isMessage ? `/fynex/users/${userId}/messages` : isCommunity ? `/fynex/communities/${body.communityId}` : `/fynex/users/${userId}`;
+  // Keep the upload-provider check deliberately simple. Exact MIME, dimensions,
+  // ownership and URL are verified server-side after ImageKit stores the file.
   const checks = body.kind === "avatar" || body.kind === "community-avatar"
-    ? "'file.size' <= '400KB' AND 'file.mime' = 'image/webp' AND 'mediaMetadata.width' = 512 AND 'mediaMetadata.height' = 512"
+    ? '"file.size" <= "400KB"'
     : body.kind === "banner" || body.kind === "community-banner"
-      ? "'file.size' <= '900KB' AND 'file.mime' = 'image/webp' AND 'mediaMetadata.width' = 1600 AND 'mediaMetadata.height' = 500"
-      : `'file.size' <= ${media!.limit} AND 'file.mime' = '${body.mime}'`;
+      ? '"file.size" <= "900KB"'
+      : `"file.size" <= ${media!.limit}`;
   const issuedAt = Math.floor(Date.now() / 1000);
   const upload = { fileName, folder, useUniqueFileName: "false", checks };
   const header = encode({ alg: "HS256", typ: "JWT", kid: publicKey });

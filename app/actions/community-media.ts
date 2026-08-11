@@ -36,7 +36,7 @@ export async function saveCommunityMediaAction(input: unknown): Promise<Communit
   const details = await getImageKitFile(parsed.data.fileId).catch(() => null);
   const limits = parsed.data.kind === "avatar"
     ? { width: 512, height: 512, size: 400_000 }
-    : { width: 1600, height: 500, size: 900_000 };
+    : { width: 1500, height: 500, size: 900_000 };
   if (!details || details.fileId !== parsed.data.fileId || details.filePath !== parsed.data.filePath
     || !details.url || !isExpectedImageKitUrl(details.url, parsed.data.filePath)
     || details.fileType !== "image" || details.mime !== "image/webp"
