@@ -1,7 +1,8 @@
 import type { Channel, Community, Message as MessageRow, Profile } from "@/lib/supabase/database.types";
 import type { LinkPreview } from "@/lib/links";
 
-export type CommunityUser = { id: string; name: string; username?: string; color: string; avatarUrl?: string | null };
+export type PresenceStatus = "online" | "idle" | "dnd" | "invisible";
+export type CommunityUser = { id: string; name: string; username?: string; color: string; avatarUrl?: string | null; status?: PresenceStatus };
 export type MessageAttachment = { kind: "image" | "video"; url: string; mime: string; size: number; width?: number | null; height?: number | null; name: string };
 export type CommunityMessage = { id: string; channelId: string; author: string; authorId: string; color: string; avatarUrl?: string | null; content: string; time: string; createdAt: string; replyToId?: string | null; attachment?: MessageAttachment; linkPreview?: LinkPreview };
 export type CommunitySpace = Community;

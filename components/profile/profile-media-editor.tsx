@@ -108,7 +108,7 @@ export function ProfileMediaEditor({ profile, onChanged }: { profile: Profile; o
   if (editor) return <section className="profile-media-crop">
     <header><div><strong>Enquadrar {editor.kind === "avatar" ? "foto" : "banner"}</strong><small>Arraste a imagem e use o controle para ajustar.</small></div><button type="button" onClick={cancelCrop} aria-label="Cancelar recorte"><X size={16} /></button></header>
     <div className={`crop-stage ${editor.kind === "avatar" ? "avatar-crop" : "banner-crop"}`}>
-      <Cropper image={editor.source} crop={crop} zoom={zoom} aspect={editor.kind === "avatar" ? 1 : 16 / 5} cropShape={editor.kind === "avatar" ? "round" : "rect"} showGrid={editor.kind === "banner"} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_, area) => setPixels(area)} onCropAreaChange={(_, area) => setPixels(area)} />
+      <Cropper image={editor.source} crop={crop} zoom={zoom} aspect={editor.kind === "avatar" ? 1 : 3} cropShape={editor.kind === "avatar" ? "round" : "rect"} showGrid={editor.kind === "banner"} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_, area) => setPixels(area)} onCropAreaChange={(_, area) => setPixels(area)} />
     </div>
     <label className="zoom-control">Zoom<input type="range" min={1} max={3} step={.05} value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
     {busy && <div className="upload-progress"><span style={{ width: `${progress}%` }} /><small>{progress < 10 ? "Preparando imagem…" : `Enviando… ${progress}%`}</small></div>}
@@ -118,7 +118,7 @@ export function ProfileMediaEditor({ profile, onChanged }: { profile: Profile; o
   return <section className="profile-media-editor">
     <div className="profile-media-card banner-card">
       <div className="media-preview" style={profile.banner_url ? { backgroundImage: `url("${profile.banner_url}")` } : { background: profile.accent_color }}><ImagePlus size={21} /></div>
-      <div><strong>Banner do perfil</strong><small>Proporção 16:5 · recomendado 1600 × 500 px</small></div>
+      <div><strong>Banner do perfil</strong><small>Proporção 3:1, estilo Twitter · recomendado 1500 × 500 px</small></div>
       <label className="media-select-button" htmlFor={bannerInputId} aria-disabled={!!busy}><ImagePlus size={14} />{profile.banner_url ? "Trocar" : "Adicionar"}</label>
       {profile.banner_url && <button type="button" className="remove-media" onClick={() => void removeImage("banner")} disabled={!!busy} aria-label="Remover banner">{busy === "banner" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button>}
       <input id={bannerInputId} className="media-file-input" type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy} onChange={(event) => { chooseFile("banner", event.target.files?.[0]); event.target.value = ""; }} />

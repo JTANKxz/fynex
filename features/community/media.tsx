@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { PresenceStatus } from "./model";
 
 function initials(name: string) { return name.trim().slice(0, 2).toUpperCase(); }
 
-export function Avatar({ name, color, imageUrl, status = true, small = false }: { name: string; color: string; imageUrl?: string | null; status?: boolean; small?: boolean }) {
-  return <span className={`avatar ${small ? "avatar-small" : ""} ${imageUrl ? "has-image" : ""}`} style={imageUrl ? { backgroundColor: color, backgroundImage: `url("${imageUrl}")` } : { background: color }}>{imageUrl ? null : initials(name)}{status && <span className="status-dot" />}</span>;
+export function Avatar({ name, color, imageUrl, status = true, presenceStatus = "online", small = false }: { name: string; color: string; imageUrl?: string | null; status?: boolean; presenceStatus?: PresenceStatus; small?: boolean }) {
+  return <span className={`avatar ${small ? "avatar-small" : ""} ${imageUrl ? "has-image" : ""}`} style={imageUrl ? { backgroundColor: color, backgroundImage: `url("${imageUrl}")` } : { background: color }}>{imageUrl ? null : initials(name)}{status && <span className={`status-dot status-${presenceStatus}`} />}</span>;
 }
 
 export function RemoteAudio({ stream, muted }: { stream?: MediaStream; muted: boolean }) {

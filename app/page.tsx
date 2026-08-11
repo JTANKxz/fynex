@@ -27,6 +27,7 @@ import { messageFromRow, type CommunityChannel, type CommunityMessage as Message
 import { EMPTY_COMMUNITY_ACCESS, resolveCommunityAccess } from "@/features/community/permissions";
 import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 import { extractFirstLink } from "@/lib/links";
+import { presenceLabels } from "@/lib/presence";
 
 const seedMessages: Message[] = [];
 type AppNotification = { id: string; author: string; text: string; communityId: string; channelId: string; channelName: string; createdAt: string; read: boolean };
@@ -144,7 +145,7 @@ export default function Home() {
     const memberships = membersResult.data ?? [];
     const ids = memberships.map((membership) => membership.user_id);
     const profilesResult = ids.length
-      ? await supabase.from("profiles").select("id, username, display_name, bio, avatar_url, banner_url, accent_color, created_at").in("id", ids)
+      ? await supabase.from("profiles").select("*").in("id", ids)
       : { data: [] as MemberProfile[] };
     const membershipMap = new Map(memberships.map((membership) => [membership.user_id, membership]));
     const roles = rolesResult.data ?? [];
@@ -253,10 +254,10 @@ export default function Home() {
       sessionStorage.removeItem("nexo:user");
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) { router.replace("/login"); return; }
-      const { data: profile } = await supabase.from("profiles").select("id, username, display_name, accent_color, avatar_url").eq("id", authUser.id).single();
+      const { data: profile } = await supabase.from("profiles").select("id, username, display_name, accent_color, avatar_url, presence_status").eq("id", authUser.id).single();
       if (cancelled) return;
       if (!profile) { await supabase.auth.signOut(); router.replace("/login?error=profile"); return; }
-      const current = { id: profile.id, username: profile.username, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
+      const current = { id: profile.id, username: profile.username, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url, status: profile.presence_status };
       userRef.current = current;
       setUser(current);
       await loadWorkspace();
@@ -761,7 +762,7 @@ export default function Home() {
         const presences = Object.values(state).flat();
         presences.forEach((presence) => {
           if (!presence.id) return;
-          if (presence.id !== realtimeUser.id) next[presence.id] = presence;
+          if (presence.id !== realtimeUser.id && presence.status !== "invisible") next[presence.id] = presence;
         });
         setOnlineUsers(next);
       })
@@ -851,9 +852,11 @@ export default function Home() {
         setSelectedProfile((current) => current?.id === profile.id ? { ...current, ...profile } : current);
 
         if (profile.id === realtimeUser.id) {
-          const nextUser = { id: profile.id, username: userRef.current?.username, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url };
+          const nextUser = { id: profile.id, username: profile.username, name: profile.display_name, color: profile.accent_color, avatarUrl: profile.avatar_url, status: profile.presence_status };
           userRef.current = nextUser;
           setUser(nextUser);
+          if (nextUser.status === "invisible") void channel.untrack();
+          else void channel.track({ ...nextUser, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
         }
       })
       .subscribe(async (status, error) => {
@@ -862,7 +865,7 @@ export default function Home() {
           realtime.current = channel;
           setRealtimeConnected(true);
           setRealtimeError("");
-          await channel.track({ ...realtimeUser, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
+          if (realtimeUser.status !== "invisible") await channel.track({ ...realtimeUser, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           setRealtimeConnected(false);
           setRealtimeError(error?.message ?? "Não foi possível conectar ao tempo real.");
@@ -1343,7 +1346,7 @@ export default function Home() {
   const draftLinkUrl = useMemo(() => extractFirstLink(draft), [draft]);
   const currentChannel = textChannels.find((channel) => channel.id === activeChannel) ?? textChannels[0];
   const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.name ?? voiceContext?.channelName;
-  const onlineMembers = user ? [user, ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id)] : [];
+  const onlineMembers = user ? [...(user.status === "invisible" ? [] : [user]), ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id && onlineUser.status !== "invisible")] : [];
   const onlineIds = new Set(onlineMembers.map((member) => member.id));
   const displayedCommunityMembers = communityMembers
     .map((member) => ({ ...member, online: onlineIds.has(member.id) }))
@@ -1482,10 +1485,9 @@ export default function Home() {
         <div className="rail-divider" />
         {voiceChannel && <button className="top-call-indicator" onClick={() => void returnToCallCommunity()} title="Voltar à chamada"><Radio size={14} /><span><strong>EM CALL</strong>{voiceContext?.communityName} · {voiceName}</span>{screenSharing && <MonitorUp size={13} />}</button>}
         <div className="rail-spacer" />
-        <button className="top-online" onClick={() => setMembersOpen(true)} aria-label="Ver membros da comunidade" title="Ver membros"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></button>
         <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações" title="Notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}</button>
         <button className="top-connections" onClick={() => setConnectionsTab("friends")} aria-label="Amigos e convites" title="Amigos e convites"><UserPlus size={16} /></button>
-        <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} small /></Link>
+        <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} small /></Link>
       </aside>
 
       {notificationsOpen && <aside className="notifications-popover" aria-label="Notificações"><header><strong>Notificações</strong><button onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações"><X size={15} /></button></header>{notifications.length ? <div>{notifications.map((notification) => <button key={notification.id} className={notification.read ? "read" : ""} onClick={() => void openNotification(notification)}><Bell size={14} /><span><strong>{notification.author}</strong><small>{notification.text} em #{notification.channelName}</small></span></button>)}</div> : <p>Nenhuma menção por enquanto.</p>}</aside>}
@@ -1528,7 +1530,7 @@ export default function Home() {
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
         {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceContext?.communityName} · {voiceName}</small></div><span className="voice-connection-actions">{voiceContext?.communityId !== activeCommunityId && <button onClick={() => void returnToCallCommunity()} aria-label="Voltar à comunidade da chamada" title="Voltar à comunidade da chamada"><MessageCircle size={14} /></button>}<button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></span></div>}
         <div className="user-panel">
-          <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} /></Link>
+          <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} /></Link>
           <div className="user-copy"><strong style={{ color: memberNameColor(user.id, user.color) }}>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
           <button className={muted ? "control-on" : ""} onClick={toggleMute} aria-label={muted ? "Ativar microfone" : "Silenciar microfone"}>{muted ? <MicOff size={15} /> : <Mic size={15} />}</button>
           <button className={deafened ? "control-on" : ""} onClick={() => setDeafened(!deafened)} aria-label={deafened ? "Ativar áudio" : "Silenciar áudio"}>{deafened ? <VolumeX size={15} /> : <Volume2 size={15} />}</button>
@@ -1609,7 +1611,7 @@ export default function Home() {
         <div className="prototype-tag"><Radio size={11} /> {activeCommunity.name.toUpperCase()}</div>
         <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>{voiceChannel ? voiceName : "Canal de voz"}</strong><small>{voiceChannel ? `${currentVoiceMembers.length} na conversa` : "Entre para conversar em tempo real"}</small><button onClick={() => voiceChannel ? leaveVoice() : voiceChannels[0] && void joinVoice(voiceChannels[0].id)} disabled={!voiceChannels.length}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
         <div className="members-heading"><h3><Users size={12} /> MEMBROS — {displayedCommunityMembers.length}</h3><button onClick={() => setMembersOpen(true)}>Ver todos</button></div>
-        {displayedCommunityMembers.map((member) => <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} /><i className={member.online ? "online" : "offline"} /></div><div><strong style={{ color: memberNameColor(member.id, member.accent_color) }}>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>{member.online ? "Online agora" : "Offline"}</small></div></button>)}
+        {displayedCommunityMembers.map((member) => { const shownStatus = member.online ? member.presence_status ?? "online" : "invisible"; return <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} status={false} /><i className={`status-${shownStatus}`} /></div><div><strong style={{ color: memberNameColor(member.id, member.accent_color) }}>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>{presenceLabels[shownStatus]}</small></div></button>; })}
       </aside>
       {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
       {channelModalType && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={channelModalType} onClose={() => setChannelModalType(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}

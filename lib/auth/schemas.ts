@@ -17,6 +17,13 @@ export const profileSchema = z.object({
   username: z.string().trim().toLowerCase().regex(/^[a-z0-9_]{3,24}$/),
   bio: z.string().trim().max(190),
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  presenceStatus: z.enum(["online", "idle", "dnd", "invisible"]),
+  songId: z.string().regex(/^[A-Za-z0-9]{1,64}$/).optional().or(z.literal("")),
+  songName: z.string().trim().max(160).optional().or(z.literal("")),
+  songArtist: z.string().trim().max(160).optional().or(z.literal("")),
+  songCoverUrl: z.url().max(500).optional().or(z.literal("")),
+  songPreviewUrl: z.url().max(500).optional().or(z.literal("")),
+  songSpotifyUrl: z.url().max(500).optional().or(z.literal("")),
 });
 
 export type ActionState = { error?: string; success?: string };

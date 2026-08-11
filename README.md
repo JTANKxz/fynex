@@ -9,6 +9,7 @@ FYNEX é uma plataforma web de comunidades com chat, voz P2P e transmissão de t
 - confirmação de e-mail temporariamente desativada durante o MVP;
 - login, logout, renovação de sessão e rotas protegidas;
 - perfil em tela ampla com nome público, `@username`, biografia e card personalizável;
+- status de privacidade configurável, banner 3:1, paleta interna e música opcional do Spotify;
 - edição de perfil em modal separado da visualização;
 - comunidades persistentes com isolamento por membros;
 - canais de texto e voz criados por comunidade;
@@ -92,11 +93,15 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/seu_id
 IMAGEKIT_PUBLIC_KEY=public_sua_chave
 IMAGEKIT_PRIVATE_KEY=private_sua_chave
+SPOTIFY_CLIENT_ID=seu_client_id
+SPOTIFY_CLIENT_SECRET=seu_client_secret
 ```
 
 No Supabase, adicione as URLs local e de produção em **Authentication → URL Configuration**. Para produção, configure `NEXT_PUBLIC_SITE_URL` com o domínio HTTPS real.
 
 As três variáveis do ImageKit habilitam avatar, banner e anexos do chat. `IMAGEKIT_PRIVATE_KEY` é exclusiva do servidor e nunca deve receber o prefixo `NEXT_PUBLIC_`. O navegador envia o arquivo diretamente ao ImageKit usando um token curto e assinado; o conteúdo do arquivo não atravessa a Vercel. A Server Action confere o arquivo no ImageKit antes de salvar seus metadados no Supabase.
+
+As credenciais do Spotify habilitam a busca de música no perfil. Crie um aplicativo no Spotify for Developers e mantenha `SPOTIFY_CLIENT_SECRET` somente no servidor, sem o prefixo `NEXT_PUBLIC_`. A prévia de 30 segundos é exibida apenas quando o Spotify fornece `preview_url` para a faixa.
 
 ## Banco de dados
 

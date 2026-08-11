@@ -33,7 +33,7 @@ export async function cropImageToWebp(file: File, crop: PixelCrop, kind: "avatar
   const bitmap = await decodeImage(file);
   const target = kind === "avatar"
     ? { width: 512, height: 512, maxBytes: 400_000 }
-    : { width: 1600, height: 500, maxBytes: 900_000 };
+    : { width: 1500, height: 500, maxBytes: 900_000 };
   const canvas = document.createElement("canvas");
   canvas.width = target.width;
   canvas.height = target.height;

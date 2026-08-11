@@ -2,9 +2,9 @@ export type Database = {
   public: {
     Tables: {
       profiles: {
-        Row: { id: string; username: string; display_name: string; bio: string; avatar_url: string | null; avatar_file_id: string | null; banner_url: string | null; banner_file_id: string | null; accent_color: string; created_at: string; updated_at: string };
-        Insert: { id: string; username: string; display_name: string; bio?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; accent_color?: string; created_at?: string; updated_at?: string };
-        Update: { username?: string; display_name?: string; bio?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; accent_color?: string; updated_at?: string };
+        Row: { id: string; username: string; display_name: string; bio: string; avatar_url: string | null; avatar_file_id: string | null; banner_url: string | null; banner_file_id: string | null; accent_color: string; presence_status: "online" | "idle" | "dnd" | "invisible"; profile_song_id: string | null; profile_song_name: string | null; profile_song_artist: string | null; profile_song_cover_url: string | null; profile_song_preview_url: string | null; profile_song_spotify_url: string | null; created_at: string; updated_at: string };
+        Insert: { id: string; username: string; display_name: string; bio?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; accent_color?: string; presence_status?: "online" | "idle" | "dnd" | "invisible"; profile_song_id?: string | null; profile_song_name?: string | null; profile_song_artist?: string | null; profile_song_cover_url?: string | null; profile_song_preview_url?: string | null; profile_song_spotify_url?: string | null; created_at?: string; updated_at?: string };
+        Update: { username?: string; display_name?: string; bio?: string; avatar_url?: string | null; avatar_file_id?: string | null; banner_url?: string | null; banner_file_id?: string | null; accent_color?: string; presence_status?: "online" | "idle" | "dnd" | "invisible"; profile_song_id?: string | null; profile_song_name?: string | null; profile_song_artist?: string | null; profile_song_cover_url?: string | null; profile_song_preview_url?: string | null; profile_song_spotify_url?: string | null; updated_at?: string };
         Relationships: [];
       };
       communities: {
