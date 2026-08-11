@@ -34,6 +34,6 @@ export function ProfileSongCard({ song, compact = false }: { song: ProfileSong; 
     <div className="profile-song-cover" style={song.coverUrl ? { backgroundImage: `url("${song.coverUrl}")` } : undefined}>{!song.coverUrl && <Music2 size={20} />}</div>
     <div><strong>{song.name}</strong><small>{song.artist}</small></div>
     <button type="button" onClick={toggle} aria-label={playing ? "Pausar música" : "Ouvir música"} title={song.previewUrl ? "Prévia de 30 segundos" : "Ouvir no player do Spotify"}>{playing ? <Pause size={15} /> : <Play size={15} />}</button>
-    {!song.previewUrl && <SpotifyEmbedPlayer trackId={song.id} title={`${song.name} — ${song.artist}`} controllerRef={embedController} onReady={handleEmbedReady} onPlayingChange={handleEmbedPlayingChange} />}
+    {!song.previewUrl && <SpotifyEmbedPlayer trackId={song.id} controllerRef={embedController} onReady={handleEmbedReady} onPlayingChange={handleEmbedPlayingChange} />}
   </article>;
 }

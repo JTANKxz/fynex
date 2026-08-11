@@ -21,11 +21,17 @@ let spotifyApiPromise: Promise<SpotifyIframeApi> | null = null;
 function loadSpotifyIframeApi() {
   if (spotifyApiPromise) return spotifyApiPromise;
 
+  const spotifyWindow = window as Window & {
+    __fynexSpotifyIframeApi?: SpotifyIframeApi;
+    onSpotifyIframeApiReady?: (api: SpotifyIframeApi) => void;
+  };
+  if (spotifyWindow.__fynexSpotifyIframeApi) return Promise.resolve(spotifyWindow.__fynexSpotifyIframeApi);
+
   spotifyApiPromise = new Promise<SpotifyIframeApi>((resolve, reject) => {
-    const spotifyWindow = window as Window & {
-      onSpotifyIframeApiReady?: (api: SpotifyIframeApi) => void;
+    spotifyWindow.onSpotifyIframeApiReady = (api) => {
+      spotifyWindow.__fynexSpotifyIframeApi = api;
+      resolve(api);
     };
-    spotifyWindow.onSpotifyIframeApiReady = resolve;
 
     const existing = document.querySelector<HTMLScriptElement>('script[src="https://open.spotify.com/embed/iframe-api/v1"]');
     if (existing) {
@@ -45,13 +51,11 @@ function loadSpotifyIframeApi() {
 
 export function SpotifyEmbedPlayer({
   trackId,
-  title,
   controllerRef,
   onReady,
   onPlayingChange,
 }: {
   trackId: string;
-  title: string;
   controllerRef: React.MutableRefObject<SpotifyEmbedController | null>;
   onReady: () => void;
   onPlayingChange: (playing: boolean) => void;
@@ -92,7 +96,7 @@ export function SpotifyEmbedPlayer({
     };
   }, [controllerRef, onPlayingChange, onReady, trackId]);
 
-  return <div className="spotify-profile-embed-engine" ref={containerRef} aria-label={`Reprodução do Spotify para ${title}`} aria-hidden="true" />;
+  return <div className="spotify-profile-embed-engine" aria-hidden="true"><div ref={containerRef} /></div>;
 }
 
 export type { SpotifyEmbedController };
