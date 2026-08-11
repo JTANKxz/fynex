@@ -60,6 +60,7 @@ export default function Home() {
   const [attachment, setAttachment] = useState<ChatAttachmentDraft | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
+  const [voiceContext, setVoiceContext] = useState<{ communityId: string; communityName: string; channelName: string } | null>(null);
   const [screenSharing, setScreenSharing] = useState(false);
   const [localScreenPreview, setLocalScreenPreview] = useState<MediaStream | null>(null);
   const [watchingScreenId, setWatchingScreenId] = useState<string | null>(null);
@@ -99,6 +100,7 @@ export default function Home() {
   const peers = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingIceCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const realtime = useRef<RealtimeChannel | null>(null);
+  const voiceRealtime = useRef<RealtimeChannel | null>(null);
   const messagesContainer = useRef<HTMLDivElement>(null);
   const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
   const sentMessageSound = useRef<HTMLAudioElement | null>(null);
@@ -109,6 +111,7 @@ export default function Home() {
   const typingSentAt = useRef(0);
   const typingStopTimer = useRef<number | null>(null);
   const remoteTypingTimers = useRef<Map<string, number>>(new Map());
+  const authenticatedUserId = user?.id;
 
   useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
   useEffect(() => () => {
@@ -264,7 +267,7 @@ export default function Home() {
   const post = useCallback((signal: Omit<Signal, "from">) => {
     const current = userRef.current;
     if (current) {
-      void realtime.current?.send({
+      void voiceRealtime.current?.send({
         type: "broadcast",
         event: "voice-signal",
         payload: { ...signal, from: current.id },
@@ -334,6 +337,80 @@ export default function Home() {
     post({ type: "offer", to: id, channel, name: current.name, payload: offer });
   }, [post]);
 
+  const handleVoiceSignal = useCallback(async (data: Signal) => {
+    const me = userRef.current;
+    if (!me || data.from === me.id || (data.to && data.to !== me.id)) return;
+    if (data.type === "leave") { closePeer(data.from); return; }
+    if (!voiceRef.current || data.channel !== voiceRef.current) return;
+
+    try {
+      if (data.type === "screen-state") {
+        setVoicePeers((old) => ({
+          ...old,
+          [data.from]: {
+            ...(old[data.from] ?? { id: data.from, name: data.name ?? "Visitante", muted: false, speaking: false }),
+            name: data.name ?? old[data.from]?.name ?? "Visitante",
+            screenSharing: !!data.screenSharing,
+            screenStream: data.screenSharing ? old[data.from]?.screenStream : undefined,
+          },
+        }));
+        if (!data.screenSharing && watchingScreenRef.current === data.from) {
+          watchingScreenRef.current = null;
+          setWatchingScreenId(null);
+          setStreamViewerOpen(false);
+          if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+        }
+      } else if (data.type === "screen-watch") {
+        const screenStream = localScreenStream.current;
+        if (!screenStream) return;
+        const pc = makePeer(data.from, data.name ?? "Visitante");
+        const videoTrack = screenStream.getVideoTracks()[0];
+        if (data.watching && videoTrack) {
+          const alreadySending = pc.getSenders().some((sender) => sender.track?.id === videoTrack.id);
+          if (!alreadySending) pc.addTrack(videoTrack, screenStream);
+          screenWatchers.current.add(data.from);
+        } else {
+          pc.getSenders().filter((sender) => sender.track?.kind === "video").forEach((sender) => pc.removeTrack(sender));
+          screenWatchers.current.delete(data.from);
+        }
+        setScreenViewerCount(screenWatchers.current.size);
+        await renegotiatePeer(data.from, pc);
+      } else if (data.type === "announce") {
+        const pc = makePeer(data.from, data.name ?? "Visitante");
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        post({ type: "offer", to: data.from, channel: voiceRef.current, name: me.name, payload: offer });
+        if (localScreenStream.current) {
+          post({ type: "screen-state", to: data.from, channel: voiceRef.current, name: me.name, screenSharing: true });
+        }
+      } else if (data.type === "offer") {
+        const pc = makePeer(data.from, data.name ?? "Visitante");
+        await pc.setRemoteDescription(data.payload as RTCSessionDescriptionInit);
+        for (const candidate of pendingIceCandidates.current.get(data.from) ?? []) await pc.addIceCandidate(candidate);
+        pendingIceCandidates.current.delete(data.from);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        post({ type: "answer", to: data.from, channel: voiceRef.current, name: me.name, payload: answer });
+      } else if (data.type === "answer") {
+        const pc = peers.current.get(data.from);
+        if (!pc) return;
+        await pc.setRemoteDescription(data.payload as RTCSessionDescriptionInit);
+        for (const candidate of pendingIceCandidates.current.get(data.from) ?? []) await pc.addIceCandidate(candidate);
+        pendingIceCandidates.current.delete(data.from);
+      } else if (data.type === "ice") {
+        const pc = peers.current.get(data.from);
+        if (!pc) return;
+        const candidate = data.payload as RTCIceCandidateInit;
+        if (pc.remoteDescription) await pc.addIceCandidate(candidate);
+        else pendingIceCandidates.current.set(data.from, [...(pendingIceCandidates.current.get(data.from) ?? []), candidate]);
+      } else if (data.type === "voice-state") {
+        setVoicePeers((old) => ({ ...old, [data.from]: { ...(old[data.from] ?? { id: data.from, name: data.name ?? "Visitante" }), muted: !!data.muted, speaking: !!data.speaking } }));
+      }
+    } catch (error) {
+      console.error("Falha na sinalização WebRTC", error);
+    }
+  }, [closePeer, makePeer, post, renegotiatePeer]);
+
   const stopWatchingScreen = useCallback(() => {
     const presenterId = watchingScreenId;
     if (presenterId && voiceRef.current) {
@@ -393,7 +470,7 @@ export default function Home() {
   }, [post, renegotiatePeers]);
 
   const startScreenShare = useCallback(async () => {
-    if (!voiceRef.current || !realtime.current) {
+    if (!voiceRef.current || !voiceRealtime.current) {
       setMicError("Entre na sala de voz antes de compartilhar a tela.");
       return;
     }
@@ -443,6 +520,87 @@ export default function Home() {
     navigator.mediaDevices.addEventListener("devicechange", refreshAudioInputs);
     return () => navigator.mediaDevices.removeEventListener("devicechange", refreshAudioInputs);
   }, [refreshAudioInputs]);
+
+  useEffect(() => {
+    if (!authenticatedUserId) return;
+    const realtimeUser = userRef.current;
+    if (!realtimeUser) return;
+    let disposed = false;
+    const voicePeersMap = peers.current;
+
+    const channel = supabase
+      .channel("fynex:voice:v1", {
+        config: {
+          presence: { key: realtimeUser.id },
+          broadcast: { self: false, ack: false },
+        },
+      })
+      .on("presence", { event: "sync" }, () => {
+        const presences = Object.values(channel.presenceState<PresenceUser>()).flat();
+        const nextVoiceMembers: Record<string, PresenceUser> = {};
+        presences.forEach((presence) => {
+          if (presence.id && presence.voiceChannel) nextVoiceMembers[presence.id] = presence;
+        });
+        setVoiceMembers(nextVoiceMembers);
+
+        const currentVoiceChannel = voiceRef.current;
+        if (!currentVoiceChannel) return;
+        const connectedIds = new Set(
+          presences
+            .filter((presence) => presence.id !== realtimeUser.id && presence.voiceChannel === currentVoiceChannel)
+            .map((presence) => presence.id),
+        );
+        peers.current.forEach((_, id) => {
+          if (!connectedIds.has(id)) closePeer(id);
+        });
+        presences.forEach((presence) => {
+          if (
+            presence.id === realtimeUser.id
+            || presence.voiceChannel !== currentVoiceChannel
+            || peers.current.has(presence.id)
+            || realtimeUser.id > presence.id
+          ) return;
+          void (async () => {
+            try {
+              const peer = makePeer(presence.id, presence.name ?? "Visitante");
+              const offer = await peer.createOffer();
+              await peer.setLocalDescription(offer);
+              post({ type: "offer", to: presence.id, channel: currentVoiceChannel, name: realtimeUser.name, payload: offer });
+            } catch (error) {
+              console.error("Falha ao iniciar conexão WebRTC", error);
+              closePeer(presence.id);
+            }
+          })();
+        });
+      })
+      .on("broadcast", { event: "voice-signal" }, ({ payload }) => {
+        void handleVoiceSignal(payload as Signal);
+      })
+      .subscribe(async (status) => {
+        if (disposed || status !== "SUBSCRIBED") return;
+        voiceRealtime.current = channel;
+        await channel.track({ ...realtimeUser, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false });
+      });
+
+    return () => {
+      disposed = true;
+      if (voiceRef.current) {
+        void channel.send({
+          type: "broadcast",
+          event: "voice-signal",
+          payload: { type: "leave", from: realtimeUser.id, channel: voiceRef.current } satisfies Signal,
+        });
+      }
+      void channel.untrack();
+      void supabase.removeChannel(channel);
+      if (voiceRealtime.current === channel) voiceRealtime.current = null;
+      localScreenStream.current?.getTracks().forEach((track) => track.stop());
+      localStream.current?.getTracks().forEach((track) => track.stop());
+      voicePeersMap.forEach((peer) => peer.close());
+      voicePeersMap.clear();
+      setVoiceMembers({});
+    };
+  }, [authenticatedUserId, closePeer, handleVoiceSignal, makePeer, post, supabase]);
 
   useEffect(() => {
     if (!activeCommunityId) return;
@@ -572,49 +730,12 @@ export default function Home() {
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState<PresenceUser>();
         const next: Record<string, PresenceUser> = {};
-        const nextVoiceMembers: Record<string, PresenceUser> = {};
         const presences = Object.values(state).flat();
         presences.forEach((presence) => {
           if (!presence.id) return;
           if (presence.id !== realtimeUser.id) next[presence.id] = presence;
-          if (presence.voiceChannel) nextVoiceMembers[presence.id] = presence;
         });
         setOnlineUsers(next);
-        setVoiceMembers(nextVoiceMembers);
-
-        const currentVoiceChannel = voiceRef.current;
-        if (!currentVoiceChannel) return;
-
-        const connectedIds = new Set(
-          presences
-            .filter((presence) => presence.id !== realtimeUser.id && presence.voiceChannel === currentVoiceChannel)
-            .map((presence) => presence.id),
-        );
-
-        peers.current.forEach((_, id) => {
-          if (!connectedIds.has(id)) closePeer(id);
-        });
-
-        presences.forEach((presence) => {
-          if (
-            presence.id === realtimeUser.id
-            || presence.voiceChannel !== currentVoiceChannel
-            || peers.current.has(presence.id)
-            || realtimeUser.id > presence.id
-          ) return;
-
-          void (async () => {
-            try {
-              const pc = makePeer(presence.id, presence.name ?? "Visitante");
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-              post({ type: "offer", to: presence.id, channel: currentVoiceChannel, name: realtimeUser.name, payload: offer });
-            } catch (error) {
-              console.error("Falha ao iniciar conexão WebRTC", error);
-              closePeer(presence.id);
-            }
-          })();
-        });
       })
       .on("broadcast", { event: "voice-signal" }, ({ payload }) => {
         void handleSignal(payload as Signal);
@@ -714,21 +835,11 @@ export default function Home() {
       disposed = true;
       if (peopleRefreshTimer) window.clearTimeout(peopleRefreshTimer);
       if (channelsRefreshTimer) window.clearTimeout(channelsRefreshTimer);
-      if (voiceRef.current) {
-        void channel.send({
-          type: "broadcast",
-          event: "voice-signal",
-          payload: { type: "leave", from: realtimeUser.id, channel: voiceRef.current } satisfies Signal,
-        });
-      }
       void channel.untrack();
       void supabase.removeChannel(channel);
-      localScreenStream.current?.getTracks().forEach((track) => track.stop());
-      localScreenStream.current = null;
       realtime.current = null;
       setRealtimeConnected(false);
       setOnlineUsers({});
-      setVoiceMembers({});
     };
   }, [activeCommunityId, closePeer, loadCommunityPeople, makePeer, playSound, post, renegotiatePeer, supabase]);
 
@@ -846,7 +957,7 @@ export default function Home() {
 
   const joinVoice = async (channel: string) => {
     if (voiceChannel === channel) return;
-    if (!realtime.current) {
+    if (!voiceRealtime.current) {
       setMicError("Aguarde a conexão em tempo real antes de entrar na voz.");
       return;
     }
@@ -872,10 +983,16 @@ export default function Home() {
       await refreshAudioInputs();
       voiceRef.current = channel;
       setVoiceChannel(channel);
+      const currentCommunity = communities.find((community) => community.id === activeCommunityId);
+      setVoiceContext({
+        communityId: currentCommunity?.id ?? activeCommunityId ?? "",
+        communityName: currentCommunity?.name ?? "Comunidade",
+        channelName: targetChannel?.name ?? "Canal de voz",
+      });
       setAudioTrackVersion((version) => version + 1);
       const current = userRef.current;
       if (current) {
-        await realtime.current.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: channel, muted: false });
+        await voiceRealtime.current.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: channel, muted: false });
       }
     } catch {
       setMicError("Não foi possível acessar o microfone. Verifique a permissão do navegador.");
@@ -888,7 +1005,7 @@ export default function Home() {
     if (voiceRef.current) post({ type: "leave", channel: voiceRef.current });
     const current = userRef.current;
     if (current) {
-      void realtime.current?.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: null, muted: false });
+      void voiceRealtime.current?.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: null, muted: false });
     }
     peers.current.forEach((peer) => peer.close());
     peers.current.clear();
@@ -898,6 +1015,7 @@ export default function Home() {
     setNoiseSuppressionApplied(null);
     voiceRef.current = null;
     setVoiceChannel(null);
+    setVoiceContext(null);
     setVoicePeers({});
     setMuted(false);
     setDeafened(false);
@@ -909,7 +1027,7 @@ export default function Home() {
     setMuted(next);
     const current = userRef.current;
     if (current) {
-      void realtime.current?.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: next });
+      void voiceRealtime.current?.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: next });
       if (voiceRef.current) {
         post({ type: "voice-state", channel: voiceRef.current, name: current.name, muted: next, speaking: next ? false : speaking });
       }
@@ -1080,7 +1198,7 @@ export default function Home() {
   const visibleMessages = useMemo(() => messages.filter((message) => message.channelId === activeChannel), [messages, activeChannel]);
   const draftLinkUrl = useMemo(() => extractFirstLink(draft), [draft]);
   const currentChannel = textChannels.find((channel) => channel.id === activeChannel) ?? textChannels[0];
-  const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.name;
+  const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.name ?? voiceContext?.channelName;
   const onlineMembers = user ? [user, ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id)] : [];
   const onlineIds = new Set(onlineMembers.map((member) => member.id));
   const displayedCommunityMembers = communityMembers
@@ -1111,14 +1229,17 @@ export default function Home() {
 
   const handleCommunityCreated = async (communityId: string) => {
     setCreateCommunityOpen(false);
-    if (voiceChannel) leaveVoice();
     await loadWorkspace(communityId);
   };
 
   const selectCommunity = async (communityId: string) => {
     if (communityId === activeCommunityId) return;
-    if (voiceChannel) leaveVoice();
     await loadWorkspace(communityId);
+  };
+
+  const returnToCallCommunity = async () => {
+    if (!voiceContext || voiceContext.communityId === activeCommunityId) return;
+    await loadWorkspace(voiceContext.communityId);
   };
 
   const handleChannelCreated = async (channelId: string, type: "text" | "voice") => {
@@ -1241,7 +1362,7 @@ export default function Home() {
           </section>
         </nav>
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
-        {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceName} · WebRTC + Supabase</small></div><button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></div>}
+        {voiceChannel && <div className="voice-connection"><div><Radio className="signal-icon" size={17} /><strong>Voz conectada</strong><small>{voiceContext?.communityName} · {voiceName}</small></div><span className="voice-connection-actions">{voiceContext?.communityId !== activeCommunityId && <button onClick={() => void returnToCallCommunity()} aria-label="Voltar à comunidade da chamada" title="Voltar à comunidade da chamada"><MessageCircle size={14} /></button>}<button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></span></div>}
         <div className="user-panel">
           <Link className="avatar-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} /></Link>
           <div className="user-copy"><strong style={{ color: memberNameColor(user.id, user.color) }}>{user.name}</strong><small>{voiceChannel ? "Na sala de voz" : "Online"}</small></div>
@@ -1283,6 +1404,7 @@ export default function Home() {
           <footer className="screen-controls">
             <div><span className="live-dot" /> AO VIVO</div>
             <div>
+              <button onClick={() => setStreamViewerOpen(false)} aria-label="Ver o chat sem encerrar a transmissão"><MessageCircle size={17} /><span>Ver chat</span></button>
               <button onClick={() => void toggleStreamFullscreen()} aria-label={streamFullscreen ? "Sair da tela cheia" : "Abrir em tela cheia"}>{streamFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}<span>{streamFullscreen ? "Sair da tela cheia" : "Tela cheia"}</span></button>
               {!screenSharing && <button onClick={stopWatchingScreen} className="leave-stream"><EyeOff size={17} /><span>Sair da transmissão</span></button>}
               {screenSharing && <button onClick={() => void stopScreenShare()} className="leave-stream"><Square size={16} /><span>Encerrar transmissão</span></button>}
