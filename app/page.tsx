@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, Pencil, PhoneOff, Plus, Radio, Reply, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { CommunityMemberRole, CommunityRole, Message as MessageRow } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction } from "@/app/actions/messages";
@@ -17,6 +17,8 @@ import { MemberProfileModal, type MemberProfile } from "@/components/community/m
 import { MessageActionsMenu, type MessageMenuState } from "@/components/community/message-actions-menu";
 import { MessageAttachment } from "@/components/community/message-attachment";
 import { MessageComposer } from "@/components/community/message-composer";
+import { MessageMentionText } from "@/components/community/message-mention-text";
+import { MessageReplyPreview, ReplyComposerPreview } from "@/components/community/message-reply-preview";
 import { MediaSettingsModal, type ScreenPreset } from "@/components/community/media-settings-modal";
 import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
 import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
@@ -24,10 +26,6 @@ import { EMPTY_COMMUNITY_ACCESS, resolveCommunityAccess } from "@/features/commu
 import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 
 const seedMessages: Message[] = [];
-
-function MessageText({ content }: { content: string }) {
-  return <>{content.split(/(@[a-zA-Z0-9_]{3,24})/g).map((part, index) => part.startsWith("@") ? <mark className="chat-mention" key={`${part}-${index}`}>{part}</mark> : part)}</>;
-}
 
 export default function Home() {
   const router = useRouter();
@@ -51,6 +49,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [replySnapshots, setReplySnapshots] = useState<Record<string, Message>>({});
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [messageMenu, setMessageMenu] = useState<MessageMenuState | null>(null);
   const [attachment, setAttachment] = useState<ChatAttachmentDraft | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -77,6 +77,7 @@ export default function Home() {
   const [micError, setMicError] = useState("");
   const [realtimeError, setRealtimeError] = useState("");
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [mentionNotice, setMentionNotice] = useState<{ author: string; channelId: string; channelName: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const voiceRef = useRef<string | null>(null);
@@ -93,6 +94,10 @@ export default function Home() {
   const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
   const sentMessageSound = useRef<HTMLAudioElement | null>(null);
   const ownMessageIds = useRef<Set<string>>(new Set());
+  const highlightTimer = useRef<number | null>(null);
+  const activeChannelRef = useRef<string | null>(null);
+
+  useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
 
   const loadCommunityPeople = useCallback(async (communityId: string) => {
     const [membersResult, rolesResult, assignmentsResult] = await Promise.all([
@@ -572,6 +577,12 @@ export default function Home() {
         setMessages((old) => old.filter((message) => message.id !== deleted.id));
         setReplyTarget((current) => current?.id === deleted.id ? null : current);
       })
+      .on("broadcast", { event: "mention-everyone" }, ({ payload }) => {
+        const mention = payload as { authorId?: string; author?: string; channelId?: string; channelName?: string };
+        if (!mention.channelId || mention.authorId === user.id) return;
+        setMentionNotice({ author: mention.author ?? "Um administrador", channelId: mention.channelId, channelName: mention.channelName ?? "canal" });
+        if (mention.channelId !== activeChannelRef.current) playSound(receivedMessageSound.current);
+      })
       .subscribe(async (status, error) => {
         if (disposed) return;
         if (status === "SUBSCRIBED") {
@@ -603,7 +614,7 @@ export default function Home() {
       setOnlineUsers({});
       setVoiceMembers({});
     };
-  }, [activeCommunityId, user, closePeer, makePeer, post, renegotiatePeer, supabase]);
+  }, [activeCommunityId, user, closePeer, makePeer, playSound, post, renegotiatePeer, supabase]);
 
   useEffect(() => {
     if (!user || !activeChannel) return;
@@ -628,7 +639,7 @@ export default function Home() {
       .eq("channel_id", activeChannel)
       .order("created_at", { ascending: false })
       .limit(150)
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (disposed) return;
         if (error) {
           setRealtimeError("Não foi possível carregar as mensagens.");
@@ -639,6 +650,20 @@ export default function Home() {
           return profile ? [messageFromRow(row, profile)] : [];
         });
         setMessages(loaded);
+        const loadedIds = new Set(loaded.map((message) => message.id));
+        const missingReplyIds = [...new Set(loaded.map((message) => message.replyToId).filter((id): id is string => Boolean(id) && !loadedIds.has(id!)))];
+        if (missingReplyIds.length) {
+          const { data: parents } = await supabase.from("messages")
+            .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
+            .in("id", missingReplyIds);
+          if (!disposed && parents) {
+            const snapshots = parents.flatMap((row) => {
+              const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+              return profile ? [messageFromRow(row, profile)] : [];
+            });
+            setReplySnapshots(Object.fromEntries(snapshots.map((message) => [message.id, message])));
+          }
+        } else setReplySnapshots({});
       });
 
     return () => {
@@ -855,6 +880,9 @@ export default function Home() {
 
       const sent = messageFromRow(result.data, { display_name: user.name, accent_color: user.color, avatar_url: user.avatarUrl ?? null });
       setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
+      if (/(^|\s)@todos([^a-zA-Z0-9_]|$)/i.test(content)) {
+        await realtime.current?.send({ type: "broadcast", event: "mention-everyone", payload: { authorId: user.id, author: user.name, channelId: activeChannel, channelName: currentChannel.name } });
+      }
       playSound(sentMessageSound.current);
       setDraft("");
       setReplyTarget(null);
@@ -923,6 +951,30 @@ export default function Home() {
     const mention = `@${member?.username ?? message.author.toLowerCase().replace(/[^a-z0-9_]/g, "_")} `;
     setDraft((current) => current.includes(mention.trim()) ? current : `${current}${current && !current.endsWith(" ") ? " " : ""}${mention}`);
     setMessageMenu(null);
+  };
+
+  const jumpToMessage = async (messageId: string) => {
+    let target = messages.find((message) => message.id === messageId) ?? replySnapshots[messageId];
+    if (!target) {
+      const { data: row } = await supabase.from("messages").select("*").eq("id", messageId).maybeSingle();
+      if (row) {
+        const { data: author } = await supabase.from("profiles").select("display_name, accent_color, avatar_url").eq("id", row.author_id).maybeSingle();
+        if (author) target = messageFromRow(row, author);
+      }
+    }
+    if (!target || target.channelId !== activeChannel) {
+      setRealtimeError("A mensagem original não está mais disponível neste canal.");
+      return;
+    }
+    if (!messages.some((message) => message.id === target?.id)) {
+      setMessages((current) => [...current, target!].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-151));
+    }
+    if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
+    window.setTimeout(() => {
+      document.getElementById(`message-${messageId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedMessageId(messageId);
+      highlightTimer.current = window.setTimeout(() => setHighlightedMessageId(null), 1800);
+    }, 40);
   };
 
   const deleteSelectedMessage = async (message: Message) => {
@@ -1038,19 +1090,19 @@ export default function Home() {
           {visibleMessages.map((message, index) => {
             const previous = visibleMessages[index - 1];
             const grouped = previous?.authorId === message.authorId;
-            const repliedMessage = message.replyToId ? visibleMessages.find((item) => item.id === message.replyToId) : undefined;
-            return <article className={`message ${grouped ? "grouped" : ""}`} key={message.id} onContextMenu={(event) => { event.preventDefault(); setMessageMenu({ message, x: event.clientX, y: event.clientY }); }}>
+            const repliedMessage = message.replyToId ? visibleMessages.find((item) => item.id === message.replyToId) ?? replySnapshots[message.replyToId] : undefined;
+            return <article id={`message-${message.id}`} className={`message ${grouped ? "grouped" : ""} ${highlightedMessageId === message.id ? "message-highlighted" : ""}`} key={message.id} onContextMenu={(event) => { event.preventDefault(); setMessageMenu({ message, x: event.clientX, y: event.clientY }); }}>
               {!grouped && <button className="message-profile-trigger avatar-trigger" onClick={() => openMemberProfile(message.authorId)} aria-label={`Ver perfil de ${message.author}`}><Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} /></button>}
-              <div>{repliedMessage && <button className="message-reply-preview" onClick={() => setReplyTarget(repliedMessage)}><Reply size={12} /><strong>{repliedMessage.author}</strong><span>{repliedMessage.content || repliedMessage.attachment?.name || "Anexo"}</span></button>}{!grouped && <header><button className="message-profile-trigger" style={{ color: message.color }} onClick={() => openMemberProfile(message.authorId)}>{message.author}</button><time>{message.time}</time></header>}
-                {message.content && <p><MessageText content={message.content} /></p>}
+              <div>{message.replyToId && <MessageReplyPreview message={repliedMessage} missing={!repliedMessage} onJump={() => void jumpToMessage(message.replyToId!)} />}{!grouped && <header><button className="message-profile-trigger" style={{ color: message.color }} onClick={() => openMemberProfile(message.authorId)}>{message.author}</button><time>{message.time}</time></header>}
+                {message.content && <p><MessageMentionText content={message.content} members={displayedCommunityMembers} onProfile={setSelectedProfile} /></p>}
                 {message.attachment ? <MessageAttachment attachment={message.attachment} /> : null}
               </div>
               <button className="message-more" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setMessageMenu({ message, x: rect.right - 198, y: rect.bottom + 4 }); }} aria-label="Ações da mensagem"><MoreHorizontal size={16} /></button>
             </article>;
           })}
         </div>
-        {replyTarget && <div className="composer-reply"><Reply size={14} /><span>Respondendo a <strong>{replyTarget.author}</strong><small>{replyTarget.content || replyTarget.attachment?.name || "Anexo"}</small></span><button onClick={() => setReplyTarget(null)} aria-label="Cancelar resposta"><X size={15} /></button></div>}
-        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} onAttachment={chooseAttachment} onDraft={setDraft} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
+        {replyTarget && <ReplyComposerPreview message={replyTarget} onClose={() => setReplyTarget(null)} />}
+        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} members={displayedCommunityMembers} canMentionEveryone={currentAccess.isAdmin} onAttachment={chooseAttachment} onDraft={setDraft} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
       </section>
 
       <aside className="members-panel">
@@ -1066,6 +1118,7 @@ export default function Home() {
       {membersOpen && <CommunityMembersModal communityId={activeCommunity.id} communityName={activeCommunity.name} currentUserId={user.id} members={displayedCommunityMembers} roles={communityRoles} assignments={memberRoleAssignments} access={currentAccess} onViewProfile={setSelectedProfile} onClose={() => setMembersOpen(false)} onChanged={() => void loadCommunityPeople(activeCommunity.id)} />}
       {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
+      {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}
       {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
     </main>
   );

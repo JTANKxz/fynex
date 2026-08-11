@@ -89,6 +89,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
 
   if (error || !data) {
     if (attachment) await deleteImageKitFile(attachment.fileId);
+    if (/@todos/i.test(parsed.data.content) && error?.code === "42501") return { error: "Somente administradores podem mencionar @todos." };
     return { error: "Não foi possível enviar a mensagem neste canal." };
   }
   return { data };
