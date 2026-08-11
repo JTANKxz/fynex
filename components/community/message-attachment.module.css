@@ -1,0 +1,42 @@
+.media {
+  width: min(520px, 100%);
+  max-width: 100%;
+  box-sizing: border-box;
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 14px;
+  color: #8d909d;
+  background: #08090d;
+  text-decoration: none;
+}
+
+.image,
+.video {
+  width: 100%;
+  height: auto;
+  max-height: 430px;
+  display: block;
+  object-fit: contain;
+  background: #030305;
+}
+
+.media small {
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  font-size: 7px;
+}
+
+.media small svg { flex: 0 0 auto; color: #a99fff; }
+.media small span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.media small b { flex: 0 0 auto; color: #696c78; font-weight: 700; }
+
+@media (max-width: 720px) {
+  .media { width: 100%; }
+  .image, .video { max-height: 330px; }
+}

@@ -1,10 +1,9 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import NextImage from "next/image";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Eye, EyeOff, FileVideo, Gift, Hash, Headphones, ImageIcon, LoaderCircle, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Send, Settings, Smile, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { Message as MessageRow } from "@/lib/supabase/database.types";
 import { sendMessageAction } from "@/app/actions/messages";
@@ -13,20 +12,14 @@ import { createClient } from "@/lib/supabase/client";
 import { CreateChannelModal } from "@/components/community/create-channel-modal";
 import { CreateCommunityModal } from "@/components/community/create-community-modal";
 import { ConnectionsModal, type ConnectionsTab } from "@/components/community/connections-modal";
+import { MessageAttachment } from "@/components/community/message-attachment";
+import { MessageComposer } from "@/components/community/message-composer";
 import { MediaSettingsModal, type ScreenPreset } from "@/components/community/media-settings-modal";
 import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
 import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
+import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 
 const seedMessages: Message[] = [];
-const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const VIDEO_MIMES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
-const IMAGE_LIMIT = 8_000_000;
-const VIDEO_LIMIT = 20_000_000;
-type ChatAttachmentDraft = { file: File; kind: "image" | "video"; previewUrl: string };
-
-function formatBytes(value: number) {
-  return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(".0", "")} MB`;
-}
 
 export default function Home() {
   const router = useRouter();
@@ -84,8 +77,6 @@ export default function Home() {
   const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
   const sentMessageSound = useRef<HTMLAudioElement | null>(null);
   const ownMessageIds = useRef<Set<string>>(new Set());
-  const attachmentInputId = useId();
-
   useEffect(() => () => {
     if (attachment) URL.revokeObjectURL(attachment.previewUrl);
   }, [attachment]);
@@ -753,12 +744,12 @@ export default function Home() {
 
   const chooseAttachment = (file?: File) => {
     if (!file) return;
-    const kind = IMAGE_MIMES.has(file.type) ? "image" : VIDEO_MIMES.has(file.type) ? "video" : null;
+    const kind = CHAT_IMAGE_MIMES.has(file.type) ? "image" : CHAT_VIDEO_MIMES.has(file.type) ? "video" : null;
     if (!kind) {
       setRealtimeError("Escolha uma imagem JPG, PNG, WebP ou GIF, ou um vídeo MP4, WebM ou MOV.");
       return;
     }
-    const limit = kind === "image" ? IMAGE_LIMIT : VIDEO_LIMIT;
+    const limit = kind === "image" ? CHAT_IMAGE_LIMIT : CHAT_VIDEO_LIMIT;
     if (file.size > limit) {
       setRealtimeError(`${kind === "image" ? "A imagem" : "O vídeo"} pode ter no máximo ${kind === "image" ? "8 MB" : "20 MB"}.`);
       return;
@@ -963,31 +954,12 @@ export default function Home() {
               {!grouped && <Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} />}
               <div>{!grouped && <header><strong style={{ color: message.color }}>{message.author}</strong><time>{message.time}</time></header>}
                 {message.content && <p>{message.content}</p>}
-                {message.attachment?.kind === "image" && <a className="message-media image" href={message.attachment.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${message.attachment.name}`}>
-                  <NextImage unoptimized src={message.attachment.url} alt={message.attachment.name} width={message.attachment.width ?? 1280} height={message.attachment.height ?? 960} sizes="(max-width: 700px) 82vw, 520px" />
-                  <small><ImageIcon size={13} /> {message.attachment.name} · {formatBytes(message.attachment.size)}</small>
-                </a>}
-                {message.attachment?.kind === "video" && <div className="message-media video">
-                  <video controls playsInline preload="metadata" src={message.attachment.url}>Seu navegador não consegue reproduzir este vídeo.</video>
-                  <small><FileVideo size={13} /> {message.attachment.name} · {formatBytes(message.attachment.size)}</small>
-                </div>}
+                {message.attachment ? <MessageAttachment attachment={message.attachment} /> : null}
               </div>
             </article>;
           })}
         </div>
-        <form className="message-composer" onSubmit={sendMessage}>
-          {attachment && <div className="attachment-draft">
-            <div className="attachment-preview">{attachment.kind === "image" ? <NextImage unoptimized src={attachment.previewUrl} alt="Prévia do anexo" fill sizes="76px" /> : <video src={attachment.previewUrl} muted playsInline />}</div>
-            <div><strong>{attachment.file.name}</strong><small>{attachment.kind === "image" ? "Imagem" : "Vídeo"} · {formatBytes(attachment.file.size)}</small>{sending && <span className="attachment-progress"><i style={{ width: `${uploadProgress}%` }} /></span>}</div>
-            <button type="button" onClick={() => setAttachment(null)} disabled={sending} aria-label="Remover anexo"><X size={15} /></button>
-          </div>}
-          <div className="message-box">
-            <label className="attachment-button" htmlFor={attachmentInputId} aria-label="Adicionar foto ou vídeo"><Plus size={17} /></label>
-            <input id={attachmentInputId} className="attachment-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" disabled={sending} onChange={(event) => { chooseAttachment(event.target.files?.[0]); event.target.value = ""; }} />
-            <input maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={realtimeConnected ? `Mensagem em #${currentChannel.name}` : "Conectando ao chat..."} />
-            <button type="button" aria-label="Enviar presente"><Gift size={16} /></button><button type="button" aria-label="Emoji"><Smile size={17} /></button><button className="send-button" type="submit" disabled={sending || (!draft.trim() && !attachment)} aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}>{sending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}</button>
-          </div>
-        </form>
+        <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} onAttachment={chooseAttachment} onDraft={setDraft} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
       </section>
 
       <aside className="members-panel">
