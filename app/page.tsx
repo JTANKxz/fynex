@@ -3,23 +3,31 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Crown, Eye, EyeOff, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, Pencil, PhoneOff, Plus, Radio, Reply, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { Message as MessageRow } from "@/lib/supabase/database.types";
-import { sendMessageAction } from "@/app/actions/messages";
+import type { CommunityMemberRole, CommunityRole, Message as MessageRow } from "@/lib/supabase/database.types";
+import { deleteMessageAction, sendMessageAction } from "@/app/actions/messages";
 import { uploadToImageKit, type ImageKitUploadToken } from "@/lib/media/imagekit-client";
 import { createClient } from "@/lib/supabase/client";
 import { CreateChannelModal } from "@/components/community/create-channel-modal";
 import { CreateCommunityModal } from "@/components/community/create-community-modal";
 import { ConnectionsModal, type ConnectionsTab } from "@/components/community/connections-modal";
+import { CommunityMembersModal } from "@/components/community/community-members-modal";
+import { MemberProfileModal, type MemberProfile } from "@/components/community/member-profile-modal";
+import { MessageActionsMenu, type MessageMenuState } from "@/components/community/message-actions-menu";
 import { MessageAttachment } from "@/components/community/message-attachment";
 import { MessageComposer } from "@/components/community/message-composer";
 import { MediaSettingsModal, type ScreenPreset } from "@/components/community/media-settings-modal";
 import { Avatar, RemoteAudio, ScreenVideo } from "@/features/community/media";
 import { messageFromRow, type CommunityChannel, type CommunityMessage as Message, type CommunitySpace, type CommunityUser as User, type PresenceUser, type VoicePeer, type VoiceSignal as Signal } from "@/features/community/model";
+import { EMPTY_COMMUNITY_ACCESS, resolveCommunityAccess } from "@/features/community/permissions";
 import { CHAT_IMAGE_LIMIT, CHAT_IMAGE_MIMES, CHAT_VIDEO_LIMIT, CHAT_VIDEO_MIMES, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 
 const seedMessages: Message[] = [];
+
+function MessageText({ content }: { content: string }) {
+  return <>{content.split(/(@[a-zA-Z0-9_]{3,24})/g).map((part, index) => part.startsWith("@") ? <mark className="chat-mention" key={`${part}-${index}`}>{part}</mark> : part)}</>;
+}
 
 export default function Home() {
   const router = useRouter();
@@ -32,10 +40,18 @@ export default function Home() {
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [createCommunityOpen, setCreateCommunityOpen] = useState(false);
   const [channelModalType, setChannelModalType] = useState<"text" | "voice" | null>(null);
+  const [editingChannel, setEditingChannel] = useState<CommunityChannel | null>(null);
   const [connectionsTab, setConnectionsTab] = useState<ConnectionsTab | null>(null);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [communityMembers, setCommunityMembers] = useState<MemberProfile[]>([]);
+  const [communityRoles, setCommunityRoles] = useState<CommunityRole[]>([]);
+  const [memberRoleAssignments, setMemberRoleAssignments] = useState<CommunityMemberRole[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<MemberProfile | null>(null);
   const [mediaSettingsOpen, setMediaSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(seedMessages);
   const [draft, setDraft] = useState("");
+  const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [messageMenu, setMessageMenu] = useState<MessageMenuState | null>(null);
   const [attachment, setAttachment] = useState<ChatAttachmentDraft | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [voiceChannel, setVoiceChannel] = useState<string | null>(null);
@@ -77,6 +93,30 @@ export default function Home() {
   const receivedMessageSound = useRef<HTMLAudioElement | null>(null);
   const sentMessageSound = useRef<HTMLAudioElement | null>(null);
   const ownMessageIds = useRef<Set<string>>(new Set());
+
+  const loadCommunityPeople = useCallback(async (communityId: string) => {
+    const [membersResult, rolesResult, assignmentsResult] = await Promise.all([
+      supabase.from("community_members").select("community_id, user_id, role, joined_at").eq("community_id", communityId),
+      supabase.from("community_roles").select("*").eq("community_id", communityId).order("position", { ascending: false }),
+      supabase.from("community_member_roles").select("*").eq("community_id", communityId),
+    ]);
+    const memberships = membersResult.data ?? [];
+    const ids = memberships.map((membership) => membership.user_id);
+    const profilesResult = ids.length
+      ? await supabase.from("profiles").select("id, username, display_name, bio, avatar_url, banner_url, accent_color, created_at").in("id", ids)
+      : { data: [] as MemberProfile[] };
+    const membershipMap = new Map(memberships.map((membership) => [membership.user_id, membership]));
+    const roles = rolesResult.data ?? [];
+    const assignments = assignmentsResult.data ?? [];
+    setCommunityRoles(roles);
+    setMemberRoleAssignments(assignments);
+    setCommunityMembers((profilesResult.data ?? []).map((profile) => ({
+      ...profile,
+      joinedAt: membershipMap.get(profile.id)?.joined_at,
+      isOwner: membershipMap.get(profile.id)?.role === "owner",
+      roles: roles.filter((role) => assignments.some((assignment) => assignment.user_id === profile.id && assignment.role_id === role.id)),
+    })));
+  }, [supabase]);
   useEffect(() => () => {
     if (attachment) URL.revokeObjectURL(attachment.previewUrl);
   }, [attachment]);
@@ -133,7 +173,8 @@ export default function Home() {
     setActiveCommunityId(selected.id);
     setCommunityChannels(nextChannels);
     setActiveChannel(nextChannels.find((channel) => channel.type === "text" && channel.id === preferredChannelId)?.id ?? nextChannels.find((channel) => channel.type === "text")?.id ?? null);
-  }, [activeCommunityId, supabase]);
+    await loadCommunityPeople(selected.id);
+  }, [activeCommunityId, loadCommunityPeople, supabase]);
 
   useEffect(() => {
     const received = new Audio("/sounds/message-received.mp3");
@@ -525,6 +566,12 @@ export default function Home() {
       .on("broadcast", { event: "voice-signal" }, ({ payload }) => {
         void handleSignal(payload as Signal);
       })
+      .on("broadcast", { event: "message-deleted" }, ({ payload }) => {
+        const deleted = payload as { id?: string; channelId?: string };
+        if (!deleted.id) return;
+        setMessages((old) => old.filter((message) => message.id !== deleted.id));
+        setReplyTarget((current) => current?.id === deleted.id ? null : current);
+      })
       .subscribe(async (status, error) => {
         if (disposed) return;
         if (status === "SUBSCRIBED") {
@@ -577,7 +624,7 @@ export default function Home() {
       .subscribe();
 
     void supabase.from("messages")
-      .select("id, channel_id, author_id, content, created_at, edited_at, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
+      .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
       .eq("channel_id", activeChannel)
       .order("created_at", { ascending: false })
       .limit(150)
@@ -636,6 +683,13 @@ export default function Home() {
       return;
     }
     if (voiceChannel) leaveVoice();
+    const targetChannel = communityChannels.find((item) => item.id === channel && item.type === "voice");
+    const uniqueMembers = new Set(Object.values(voiceMembers).filter((member) => member.voiceChannel === channel).map((member) => member.id));
+    const userLimit = targetChannel?.user_limit ?? 10;
+    if (uniqueMembers.size >= userLimit) {
+      setMicError(`Este canal está lotado (${userLimit}/${userLimit}).`);
+      return;
+    }
     setMicError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -788,6 +842,7 @@ export default function Home() {
         id: messageId,
         channelId: activeChannel,
         content,
+        replyToId: replyTarget?.id ?? null,
         attachment: attachment && uploaded ? {
           kind: attachment.kind,
           fileId: uploaded.fileId,
@@ -802,6 +857,7 @@ export default function Home() {
       setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
       playSound(sentMessageSound.current);
       setDraft("");
+      setReplyTarget(null);
       setAttachment(null);
       setUploadProgress(0);
     } catch (error) {
@@ -819,6 +875,13 @@ export default function Home() {
   const currentChannel = textChannels.find((channel) => channel.id === activeChannel) ?? textChannels[0];
   const voiceName = voiceChannels.find((channel) => channel.id === voiceChannel)?.name;
   const onlineMembers = user ? [user, ...Object.values(onlineUsers).filter((onlineUser) => onlineUser.id !== user.id)] : [];
+  const onlineIds = new Set(onlineMembers.map((member) => member.id));
+  const displayedCommunityMembers = communityMembers
+    .map((member) => ({ ...member, online: onlineIds.has(member.id) }))
+    .sort((a, b) => Number(b.online) - Number(a.online) || Number(b.isOwner) - Number(a.isOwner) || a.display_name.localeCompare(b.display_name));
+  const currentAccess = activeCommunity && user
+    ? resolveCommunityAccess(activeCommunity.owner_id, user.id, communityRoles, memberRoleAssignments)
+    : EMPTY_COMMUNITY_ACCESS;
   const getVoiceMembers = (channelId: string) => {
     const members = Object.values(voiceMembers)
       .filter((member) => member.voiceChannel === channelId)
@@ -846,7 +909,32 @@ export default function Home() {
 
   const handleChannelCreated = async (channelId: string, type: "text" | "voice") => {
     setChannelModalType(null);
+    setEditingChannel(null);
     await loadWorkspace(activeCommunityId ?? undefined, type === "text" ? channelId : activeChannel ?? undefined);
+  };
+
+  const openMemberProfile = (userId: string) => {
+    const member = displayedCommunityMembers.find((item) => item.id === userId);
+    if (member) setSelectedProfile(member);
+  };
+
+  const mentionMessageAuthor = (message: Message) => {
+    const member = communityMembers.find((item) => item.id === message.authorId);
+    const mention = `@${member?.username ?? message.author.toLowerCase().replace(/[^a-z0-9_]/g, "_")} `;
+    setDraft((current) => current.includes(mention.trim()) ? current : `${current}${current && !current.endsWith(" ") ? " " : ""}${mention}`);
+    setMessageMenu(null);
+  };
+
+  const deleteSelectedMessage = async (message: Message) => {
+    setMessageMenu(null);
+    const result = await deleteMessageAction({ messageId: message.id });
+    if (result.error) {
+      setRealtimeError(result.error);
+      return;
+    }
+    setMessages((old) => old.filter((item) => item.id !== message.id));
+    if (replyTarget?.id === message.id) setReplyTarget(null);
+    await realtime.current?.send({ type: "broadcast", event: "message-deleted", payload: { id: message.id, channelId: message.channelId } });
   };
 
   if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
@@ -860,7 +948,7 @@ export default function Home() {
         <button className="server add-server" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade" title="Criar comunidade"><Plus size={18} /></button>
         <div className="community-badge"><Radio size={14} /><span>{activeCommunity.name}</span></div>
         <div className="rail-spacer" />
-        <div className="top-online"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></div>
+        <button className="top-online" onClick={() => setMembersOpen(true)} aria-label="Ver membros da comunidade" title="Ver membros"><Users size={15} /><strong>{onlineMembers.length}</strong><span>online</span></button>
         <button className="top-connections" onClick={() => setConnectionsTab("friends")} aria-label="Amigos e convites" title="Amigos e convites"><UserPlus size={16} /></button>
         <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} small /></Link>
       </aside>
@@ -872,15 +960,15 @@ export default function Home() {
         <div className="invite-card"><UserPlus size={15} /><div><strong>Convide alguém</strong><small>Amigos, convites e entrada</small></div><button onClick={() => setConnectionsTab("community")}>Gerenciar</button></div>
         <nav className="channel-nav">
           <section>
-            <div className="section-title"><span>CANAIS DE TEXTO</span><button onClick={() => setChannelModalType("text")} aria-label="Criar canal de texto" title="Criar canal de texto"><Plus size={14} /></button></div>
-            {textChannels.map((channel) => <button key={channel.id} className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.name}<i>{onlineMembers.length}</i></button>)}
+            <div className="section-title"><span>CANAIS DE TEXTO</span>{currentAccess.manageChannels && <button onClick={() => setChannelModalType("text")} aria-label="Criar canal de texto" title="Criar canal de texto"><Plus size={14} /></button>}</div>
+            {textChannels.map((channel) => <div className="channel-row" key={channel.id}><button className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.name}<i>{onlineMembers.length}</i></button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`} title="Editar canal"><Pencil size={12} /></button>}</div>)}
           </section>
           <section className="voice-section">
-            <div className="section-title"><span>CANAIS DE VOZ</span><button onClick={() => setChannelModalType("voice")} aria-label="Criar canal de voz" title="Criar canal de voz"><Plus size={14} /></button></div>
+            <div className="section-title"><span>CANAIS DE VOZ</span>{currentAccess.manageChannels && <button onClick={() => setChannelModalType("voice")} aria-label="Criar canal de voz" title="Criar canal de voz"><Plus size={14} /></button>}</div>
             {voiceChannels.map((channel) => {
               const channelMembers = getVoiceMembers(channel.id);
               return <div key={channel.id}>
-                <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)}><Radio size={16} />{channel.name}{voiceChannel === channel.id ? <b className="live-pill">CONECTADO</b> : channelMembers.length > 0 && <i>{channelMembers.length}</i>}</button>
+                <div className="channel-row"><button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void joinVoice(channel.id)} disabled={voiceChannel !== channel.id && channelMembers.length >= (channel.user_limit ?? 10)}><Radio size={16} />{channel.name}<small className="voice-capacity">{channelMembers.length}/{channel.user_limit ?? 10}</small>{voiceChannel === channel.id && <b className="live-pill">CONECTADO</b>}</button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`} title="Editar canal"><Pencil size={12} /></button>}</div>
                 {channelMembers.length > 0 && <div className="voice-list">
                   {channelMembers.map((member) => {
                     const isCurrentUser = member.id === user.id;
@@ -950,28 +1038,34 @@ export default function Home() {
           {visibleMessages.map((message, index) => {
             const previous = visibleMessages[index - 1];
             const grouped = previous?.authorId === message.authorId;
-            return <article className={`message ${grouped ? "grouped" : ""}`} key={message.id}>
-              {!grouped && <Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} />}
-              <div>{!grouped && <header><strong style={{ color: message.color }}>{message.author}</strong><time>{message.time}</time></header>}
-                {message.content && <p>{message.content}</p>}
+            const repliedMessage = message.replyToId ? visibleMessages.find((item) => item.id === message.replyToId) : undefined;
+            return <article className={`message ${grouped ? "grouped" : ""}`} key={message.id} onContextMenu={(event) => { event.preventDefault(); setMessageMenu({ message, x: event.clientX, y: event.clientY }); }}>
+              {!grouped && <button className="message-profile-trigger avatar-trigger" onClick={() => openMemberProfile(message.authorId)} aria-label={`Ver perfil de ${message.author}`}><Avatar name={message.author} color={message.color} imageUrl={message.avatarUrl} status={false} /></button>}
+              <div>{repliedMessage && <button className="message-reply-preview" onClick={() => setReplyTarget(repliedMessage)}><Reply size={12} /><strong>{repliedMessage.author}</strong><span>{repliedMessage.content || repliedMessage.attachment?.name || "Anexo"}</span></button>}{!grouped && <header><button className="message-profile-trigger" style={{ color: message.color }} onClick={() => openMemberProfile(message.authorId)}>{message.author}</button><time>{message.time}</time></header>}
+                {message.content && <p><MessageText content={message.content} /></p>}
                 {message.attachment ? <MessageAttachment attachment={message.attachment} /> : null}
               </div>
+              <button className="message-more" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setMessageMenu({ message, x: rect.right - 198, y: rect.bottom + 4 }); }} aria-label="Ações da mensagem"><MoreHorizontal size={16} /></button>
             </article>;
           })}
         </div>
+        {replyTarget && <div className="composer-reply"><Reply size={14} /><span>Respondendo a <strong>{replyTarget.author}</strong><small>{replyTarget.content || replyTarget.attachment?.name || "Anexo"}</small></span><button onClick={() => setReplyTarget(null)} aria-label="Cancelar resposta"><X size={15} /></button></div>}
         <MessageComposer attachment={attachment} channelName={currentChannel.name} draft={draft} realtimeConnected={realtimeConnected} sending={sending} uploadProgress={uploadProgress} onAttachment={chooseAttachment} onDraft={setDraft} onRemoveAttachment={() => setAttachment(null)} onSubmit={sendMessage} />
       </section>
 
       <aside className="members-panel">
         <div className="prototype-tag"><Radio size={11} /> {activeCommunity.name.toUpperCase()}</div>
         <div className="members-hero"><div className="orbit-ring"><Headphones size={25} /><i /><b /></div><strong>{voiceChannel ? voiceName : "Canal de voz"}</strong><small>{voiceChannel ? `${currentVoiceMembers.length} na conversa` : "Entre para conversar em tempo real"}</small><button onClick={() => voiceChannel ? leaveVoice() : voiceChannels[0] && void joinVoice(voiceChannels[0].id)} disabled={!voiceChannels.length}>{voiceChannel ? <><PhoneOff size={14} /> Sair da voz</> : <><Headphones size={14} /> Entrar na voz</>}</button></div>
-        <h3><Users size={12} /> PESSOAS ONLINE — {onlineMembers.length}</h3>
-        {onlineMembers.map((member, index) => <div className="member" key={member.id}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} /><div><strong>{member.name}{index === 0 && <span>VOCÊ</span>}</strong><small>{index === 0 ? "Nesta aba" : "Online agora"}</small></div></div>)}
-        {onlineMembers.length === 1 && <div className="alone-note"><Users size={18} /><strong>Só você por enquanto</strong><small>Abra o FYNEX em outra aba e escolha outro nome para testar.</small></div>}
+        <div className="members-heading"><h3><Users size={12} /> MEMBROS — {displayedCommunityMembers.length}</h3><button onClick={() => setMembersOpen(true)}>Ver todos</button></div>
+        {displayedCommunityMembers.map((member) => <button className="member member-button" key={member.id} onClick={() => setSelectedProfile(member)}><div className="member-presence-avatar"><Avatar name={member.display_name} color={member.accent_color} imageUrl={member.avatar_url} /><i className={member.online ? "online" : "offline"} /></div><div><strong>{member.display_name}{member.id === user.id && <span>VOCÊ</span>}{member.isOwner && <Crown size={11} />}</strong><small>{member.online ? "Online agora" : "Offline"}</small></div></button>)}
       </aside>
       {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
       {channelModalType && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={channelModalType} onClose={() => setChannelModalType(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
-      {connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} />}
+      {editingChannel && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={editingChannel.type as "text" | "voice"} channel={editingChannel} onClose={() => setEditingChannel(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
+      {connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onViewProfile={(profile) => setSelectedProfile(displayedCommunityMembers.find((member) => member.id === profile.id) ?? profile)} />}
+      {membersOpen && <CommunityMembersModal communityId={activeCommunity.id} communityName={activeCommunity.name} currentUserId={user.id} members={displayedCommunityMembers} roles={communityRoles} assignments={memberRoleAssignments} access={currentAccess} onViewProfile={setSelectedProfile} onClose={() => setMembersOpen(false)} onChanged={() => void loadCommunityPeople(activeCommunity.id)} />}
+      {selectedProfile && <MemberProfileModal profile={selectedProfile} onClose={() => setSelectedProfile(null)} />}
+      {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} echoCancellation={echoCancellation} autoGainControl={autoGainControl} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={() => setMediaSettingsOpen(false)} />}
     </main>
   );

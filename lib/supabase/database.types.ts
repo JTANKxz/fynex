@@ -22,10 +22,22 @@ export type Database = {
           { foreignKeyName: "community_members_user_id_fkey"; columns: ["user_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
         ];
       };
+      community_roles: {
+        Row: { id: string; community_id: string; name: string; color: string; position: number; is_admin: boolean; manage_channels: boolean; manage_roles: boolean; manage_messages: boolean; manage_members: boolean; created_by: string; created_at: string; updated_at: string };
+        Insert: { id?: string; community_id: string; name: string; color?: string; position?: number; is_admin?: boolean; manage_channels?: boolean; manage_roles?: boolean; manage_messages?: boolean; manage_members?: boolean; created_by: string; created_at?: string; updated_at?: string };
+        Update: { name?: string; color?: string; position?: number; is_admin?: boolean; manage_channels?: boolean; manage_roles?: boolean; manage_messages?: boolean; manage_members?: boolean; updated_at?: string };
+        Relationships: [];
+      };
+      community_member_roles: {
+        Row: { community_id: string; user_id: string; role_id: string; assigned_by: string; assigned_at: string };
+        Insert: { community_id: string; user_id: string; role_id: string; assigned_by: string; assigned_at?: string };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       channels: {
-        Row: { id: string; community_id: string; name: string; type: string; position: number; created_at: string };
-        Insert: { id?: string; community_id: string; name: string; type: string; position?: number; created_at?: string };
-        Update: { name?: string; type?: string; position?: number };
+        Row: { id: string; community_id: string; name: string; type: string; position: number; created_by: string | null; user_limit: number | null; created_at: string };
+        Insert: { id?: string; community_id: string; name: string; type: string; position?: number; created_by?: string | null; user_limit?: number | null; created_at?: string };
+        Update: { name?: string; type?: string; position?: number; user_limit?: number | null };
         Relationships: [{ foreignKeyName: "channels_community_id_fkey"; columns: ["community_id"]; isOneToOne: false; referencedRelation: "communities"; referencedColumns: ["id"] }];
       };
       friendships: {
@@ -47,9 +59,9 @@ export type Database = {
         Relationships: [];
       };
       messages: {
-        Row: { id: string; channel_id: string; author_id: string; content: string; created_at: string; edited_at: string | null; attachment_kind: string | null; attachment_url: string | null; attachment_file_id: string | null; attachment_path: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_width: number | null; attachment_height: number | null; attachment_name: string | null };
-        Insert: { id?: string; channel_id: string; author_id: string; content?: string; created_at?: string; edited_at?: string | null; attachment_kind?: string | null; attachment_url?: string | null; attachment_file_id?: string | null; attachment_path?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_width?: number | null; attachment_height?: number | null; attachment_name?: string | null };
-        Update: { content?: string; edited_at?: string | null; attachment_kind?: string | null; attachment_url?: string | null; attachment_file_id?: string | null; attachment_path?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_width?: number | null; attachment_height?: number | null; attachment_name?: string | null };
+        Row: { id: string; channel_id: string; author_id: string; content: string; created_at: string; edited_at: string | null; reply_to_id: string | null; attachment_kind: string | null; attachment_url: string | null; attachment_file_id: string | null; attachment_path: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_width: number | null; attachment_height: number | null; attachment_name: string | null };
+        Insert: { id?: string; channel_id: string; author_id: string; content?: string; created_at?: string; edited_at?: string | null; reply_to_id?: string | null; attachment_kind?: string | null; attachment_url?: string | null; attachment_file_id?: string | null; attachment_path?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_width?: number | null; attachment_height?: number | null; attachment_name?: string | null };
+        Update: { content?: string; edited_at?: string | null; reply_to_id?: string | null; attachment_kind?: string | null; attachment_url?: string | null; attachment_file_id?: string | null; attachment_path?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_width?: number | null; attachment_height?: number | null; attachment_name?: string | null };
         Relationships: [
           { foreignKeyName: "messages_author_id_fkey"; columns: ["author_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
           { foreignKeyName: "messages_channel_id_fkey"; columns: ["channel_id"]; isOneToOne: false; referencedRelation: "channels"; referencedColumns: ["id"] },
@@ -67,3 +79,5 @@ export type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 export type Community = Database["public"]["Tables"]["communities"]["Row"];
 export type Channel = Database["public"]["Tables"]["channels"]["Row"];
 export type Message = Database["public"]["Tables"]["messages"]["Row"];
+export type CommunityRole = Database["public"]["Tables"]["community_roles"]["Row"];
+export type CommunityMemberRole = Database["public"]["Tables"]["community_member_roles"]["Row"];

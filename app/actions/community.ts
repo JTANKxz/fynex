@@ -14,6 +14,7 @@ const channelSchema = z.object({
   communityId: z.uuid(),
   name: z.string().trim().min(1).max(32),
   type: z.enum(["text", "voice"]),
+  userLimit: z.coerce.number().int().min(1).max(10).optional(),
 });
 
 export type CommunityActionState = { error?: string; communityId?: string };
@@ -74,8 +75,8 @@ export async function createChannelAction(_state: ChannelActionState, formData: 
   const userId = data?.claims?.sub;
   if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
 
-  const { data: community } = await supabase.from("communities").select("id").eq("id", parsed.data.communityId).eq("owner_id", userId).maybeSingle();
-  if (!community) return { error: "Somente o dono pode criar canais." };
+  const { data: community } = await supabase.from("communities").select("id").eq("id", parsed.data.communityId).maybeSingle();
+  if (!community) return { error: "Comunidade não encontrada." };
 
   const { data: lastChannel } = await supabase.from("channels").select("position").eq("community_id", community.id).order("position", { ascending: false }).limit(1).maybeSingle();
   const position = Math.min((lastChannel?.position ?? -1) + 1, 32767);
@@ -84,11 +85,36 @@ export async function createChannelAction(_state: ChannelActionState, formData: 
     name,
     type: parsed.data.type,
     position,
+    created_by: userId,
+    user_limit: parsed.data.type === "voice" ? (parsed.data.userLimit ?? 10) : null,
   }).select("id, type").single();
 
   if (error?.code === "23505") return { error: "Já existe um canal com esse nome nesta comunidade." };
   if (error || !channel) return { error: "Não foi possível criar o canal." };
 
+  revalidatePath("/");
+  return { channelId: channel.id, channelType: channel.type as "text" | "voice" };
+}
+
+const updateChannelSchema = channelSchema.extend({ channelId: z.uuid() });
+
+export async function updateChannelAction(_state: ChannelActionState, formData: FormData): Promise<ChannelActionState> {
+  const parsed = updateChannelSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Confira o nome e o limite do canal." };
+  const name = channelSlug(parsed.data.name);
+  if (!name) return { error: "Use pelo menos uma letra ou número no nome." };
+
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  if (!data?.claims?.sub) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { data: channel, error } = await supabase.from("channels").update({
+    name,
+    user_limit: parsed.data.type === "voice" ? (parsed.data.userLimit ?? 10) : null,
+  }).eq("id", parsed.data.channelId).eq("community_id", parsed.data.communityId).eq("type", parsed.data.type).select("id, type").single();
+
+  if (error?.code === "23505") return { error: "Já existe um canal com esse nome nesta comunidade." };
+  if (error || !channel) return { error: "Você não tem permissão para editar este canal." };
   revalidatePath("/");
   return { channelId: channel.id, channelType: channel.type as "text" | "voice" };
 }

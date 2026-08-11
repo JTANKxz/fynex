@@ -4,6 +4,7 @@ import { useActionState, useCallback, useEffect, useMemo, useState } from "react
 import { Check, Copy, Link2, ShieldCheck, UserPlus, Users, X } from "lucide-react";
 import type { Community } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/client";
+import type { MemberProfile } from "@/components/community/member-profile-modal";
 import {
   inviteFriendAction,
   joinCommunityAction,
@@ -15,7 +16,7 @@ import {
   type SocialActionState,
 } from "@/app/actions/social";
 
-type Person = { id: string; username: string; display_name: string; accent_color: string };
+type Person = Pick<MemberProfile, "id" | "username" | "display_name" | "bio" | "avatar_url" | "banner_url" | "accent_color" | "created_at">;
 type Friendship = { user_a: string; user_b: string; requested_by: string; status: string };
 type IncomingInvite = { id: string; community_id: string; communityName: string };
 type JoinRequest = { id: string; user_id: string; person?: Person };
@@ -33,7 +34,7 @@ function InlineResponse({ action, fields, acceptLabel = "Aceitar", declineLabel 
 
 export type ConnectionsTab = "friends" | "community" | "join";
 
-export function ConnectionsModal({ community, currentUserId, initialTab = "friends", onClose, onMembershipChanged, onCommunityChanged }: { community: Community; currentUserId: string; initialTab?: ConnectionsTab; onClose: () => void; onMembershipChanged: () => void; onCommunityChanged: () => void }) {
+export function ConnectionsModal({ community, currentUserId, initialTab = "friends", onClose, onMembershipChanged, onCommunityChanged, onViewProfile }: { community: Community; currentUserId: string; initialTab?: ConnectionsTab; onClose: () => void; onMembershipChanged: () => void; onCommunityChanged: () => void; onViewProfile?: (profile: MemberProfile) => void }) {
   const supabase = useMemo(() => createClient(), []);
   const [tab, setTab] = useState<ConnectionsTab>(initialTab);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
@@ -61,7 +62,7 @@ export function ConnectionsModal({ community, currentUserId, initialTab = "frien
     profileIds.delete(currentUserId);
     const communityIds = [...new Set(inviteRows.map((row) => row.community_id))];
     const [profilesResult, communitiesResult] = await Promise.all([
-      profileIds.size ? supabase.from("profiles").select("id, username, display_name, accent_color").in("id", [...profileIds]) : Promise.resolve({ data: [] as Person[] }),
+      profileIds.size ? supabase.from("profiles").select("id, username, display_name, bio, avatar_url, banner_url, accent_color, created_at").in("id", [...profileIds]) : Promise.resolve({ data: [] as Person[] }),
       communityIds.length ? supabase.from("communities").select("id, name").in("id", communityIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
     ]);
     const profileMap = Object.fromEntries((profilesResult.data ?? []).map((profile) => [profile.id, profile]));
@@ -105,7 +106,7 @@ export function ConnectionsModal({ community, currentUserId, initialTab = "frien
           <form action={friendAction} className="social-form"><label>Adicionar pelo nome de usuário<div><span>@</span><input name="username" placeholder="nome_de_usuario" required /></div></label><button disabled={friendPending}><UserPlus size={15} />Adicionar amigo</button></form>
           {(friendState.error || friendState.success) && <p className={`form-message ${friendState.error ? "error" : "success"}`}>{friendState.error ?? friendState.success}</p>}
           <section className="connection-list"><h3>PEDIDOS RECEBIDOS — {incomingRequests.length}</h3>{incomingRequests.map((request) => { const person = people[request.user_a === currentUserId ? request.user_b : request.user_a]; return <article key={`${request.user_a}-${request.user_b}`}><span className="person-color" style={{ background: person?.accent_color }} /> <div><strong>{person?.display_name ?? "Usuário"}</strong><small>@{person?.username}</small></div><InlineResponse action={respondFriendRequestAction} fields={{ userA: request.user_a, userB: request.user_b }} onDone={() => void refresh()} /></article>; })}{!incomingRequests.length && <p>Nenhum pedido aguardando você.</p>}</section>
-          <section className="connection-list"><h3>AMIGOS — {acceptedFriends.length}</h3>{acceptedFriends.map((person) => <article key={person.id}><span className="person-color" style={{ background: person.accent_color }} /><div><strong>{person.display_name}</strong><small>@{person.username}</small></div></article>)}{!acceptedFriends.length && <p>Sua lista de amigos ainda está vazia.</p>}{outgoingRequests.length > 0 && <small>{outgoingRequests.length} pedido(s) enviado(s) aguardando resposta.</small>}</section>
+          <section className="connection-list"><h3>AMIGOS — {acceptedFriends.length}</h3>{acceptedFriends.map((person) => <article key={person.id} className="clickable-person" onClick={() => onViewProfile?.({ ...person, online: false, roles: [] })}><span className="person-color" style={{ background: person.accent_color }} /><div><strong>{person.display_name}</strong><small>@{person.username} · visualizar perfil</small></div></article>)}{!acceptedFriends.length && <p>Sua lista de amigos ainda está vazia.</p>}{outgoingRequests.length > 0 && <small>{outgoingRequests.length} pedido(s) enviado(s) aguardando resposta.</small>}</section>
           {invites.length > 0 && <section className="connection-list"><h3>CONVITES DE COMUNIDADE — {invites.length}</h3>{invites.map((invite) => <article key={invite.id}><div><strong>{invite.communityName}</strong><small>Você foi convidado</small></div><InlineResponse action={respondCommunityInviteAction} fields={{ invitationId: invite.id }} onDone={() => { void refresh(); onMembershipChanged(); }} /></article>)}</section>}
         </>}
 

@@ -17,6 +17,7 @@ const messageSchema = z.object({
   id: z.uuid(),
   channelId: z.uuid(),
   content: z.string().trim().max(2000),
+  replyToId: z.uuid().nullable().optional(),
   attachment: attachmentSchema.optional(),
 }).refine((value) => value.content.length > 0 || value.attachment, { message: "Mensagem vazia" });
 
@@ -74,6 +75,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     channel_id: parsed.data.channelId,
     author_id: userId,
     content: parsed.data.content,
+    reply_to_id: parsed.data.replyToId ?? null,
     attachment_kind: attachment?.kind ?? null,
     attachment_url: verified?.url ?? null,
     attachment_file_id: attachment?.fileId ?? null,
@@ -90,4 +92,30 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     return { error: "Não foi possível enviar a mensagem neste canal." };
   }
   return { data };
+}
+
+const deleteMessageSchema = z.object({ messageId: z.uuid() });
+
+export async function deleteMessageAction(input: unknown): Promise<{ success?: true; error?: string }> {
+  const parsed = deleteMessageSchema.safeParse(input);
+  if (!parsed.success) return { error: "Mensagem inválida." };
+
+  const supabase = await createClient();
+  const { data: authData } = await supabase.auth.getClaims();
+  if (!authData?.claims?.sub) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { data: message } = await supabase
+    .from("messages")
+    .select("id, attachment_file_id")
+    .eq("id", parsed.data.messageId)
+    .maybeSingle();
+  if (!message) return { error: "Mensagem não encontrada." };
+
+  const { error } = await supabase.from("messages").delete().eq("id", parsed.data.messageId);
+  if (error) return { error: "Você não tem permissão para apagar esta mensagem." };
+
+  if (message.attachment_file_id) {
+    await deleteImageKitFile(message.attachment_file_id).catch(() => undefined);
+  }
+  return { success: true };
 }

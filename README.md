@@ -12,6 +12,10 @@ FYNEX é uma plataforma web de comunidades com chat, voz P2P e transmissão de t
 - edição de perfil em modal separado da visualização;
 - comunidades persistentes com isolamento por membros;
 - canais de texto e voz criados por comunidade;
+- lista completa de membros com presença online/offline e perfil visualizável;
+- cargos hierárquicos com permissões de canais, cargos, mensagens e membros;
+- respostas vinculadas, menções com `@` e exclusão de mensagens para todos;
+- canais de voz configuráveis com limite de 1 a 10 pessoas;
 - chat persistente e em tempo real por canal;
 - envio de uma imagem ou vídeo por mensagem, com prévia e progresso de upload;
 - presença online separada por comunidade;
@@ -53,8 +57,10 @@ Separação principal:
 - tabelas públicas usam Row Level Security;
 - `anon` não pode ler nem escrever perfis, comunidades, canais ou mensagens;
 - membros só podem consultar comunidades, canais e mensagens dos espaços aos quais pertencem;
-- apenas o dono pode alterar ou excluir a comunidade e administrar seus canais;
-- mensagens só podem ser criadas, alteradas ou excluídas pelo próprio autor;
+- o criador da comunidade é uma autoridade fixa e não pode ser removido, rebaixado ou moderado por cargos;
+- cargos só administram membros e cargos abaixo da própria posição; permissões também são verificadas por RLS;
+- canais podem ser criados e editados pelo dono ou por cargos com `Gerenciar canais`;
+- mensagens podem ser excluídas pelo autor, pelo dono ou por moderadores autorizados; moderadores não apagam mensagens do criador;
 - anexos usam token curto, pasta vinculada ao usuário e verificação posterior pela API do ImageKit;
 - imagens aceitas: JPG, PNG, WebP e GIF até 8 MB; vídeos: MP4, WebM e MOV até 20 MB;
 - perfis só podem ser alterados pelo dono;
@@ -94,7 +100,7 @@ As três variáveis do ImageKit habilitam avatar, banner e anexos do chat. `IMAG
 
 ## Banco de dados
 
-A migração atual cria `profiles`, `communities`, `community_members`, `channels` e `messages`, além dos índices, gatilhos e políticas RLS. Cada conta recebe uma comunidade inicial com um canal de texto e outro de voz. Para um projeto novo, aplique os arquivos de `supabase/migrations` em ordem usando a CLI do Supabase.
+A migração atual cria `profiles`, `communities`, `community_members`, `community_roles`, `community_member_roles`, `channels` e `messages`, além dos índices, gatilhos e políticas RLS. Cada conta recebe uma comunidade inicial com um canal de texto e outro de voz. Para um projeto novo, aplique os arquivos de `supabase/migrations` em ordem usando a CLI do Supabase.
 
 O esquema do protótipo anônimo foi substituído intencionalmente. Dados de teste antigos não são compatíveis com a versão autenticada.
 
