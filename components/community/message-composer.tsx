@@ -1,12 +1,16 @@
 "use client";
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { AtSign, ExternalLink, Gift, Link2Off, LoaderCircle, Megaphone, RotateCcw, Send, Smile, X } from "lucide-react";
+import { AtSign, ExternalLink, Link2Off, LoaderCircle, Megaphone, RotateCcw, Send, Smile, X } from "lucide-react";
 import NextImage from "next/image";
 import { CHAT_ATTACHMENT_ACCEPT, formatFileSize, type ChatAttachmentDraft } from "@/lib/media/chat-attachments";
 import type { MemberProfile } from "./member-profile-modal";
 import type { LinkPreview } from "@/lib/links";
 import styles from "./message-composer.module.css";
+import { ComposerExtras, type PollDraft } from "./composer-extras";
+import { FynexEmojiPicker } from "@/components/ui/fynex-emoji-picker";
+import type { CommunitySticker } from "@/lib/supabase/database.types";
+import { ImageCropDialog } from "@/components/ui/image-crop-dialog";
 
 type MessageComposerProps = {
   attachment: ChatAttachmentDraft | null;
@@ -16,7 +20,9 @@ type MessageComposerProps = {
   sending: boolean;
   uploadProgress: number;
   members: MemberProfile[];
+  stickers: CommunitySticker[];
   canMentionEveryone: boolean;
+  focusRequestKey?: string | null;
   onAttachment: (file?: File) => void;
   onDraft: (value: string) => void;
   onRemoveAttachment: () => void;
@@ -24,14 +30,19 @@ type MessageComposerProps = {
   linkPreviewRemoved: boolean;
   onRemoveLinkPreview: () => void;
   onRestoreLinkPreview: () => void;
+  onCreatePoll: (poll: PollDraft) => void;
+  onSendSticker: (stickerId: string) => void;
   onSubmit: (event: FormEvent) => void;
 };
 
-export function MessageComposer({ attachment, channelName, draft, realtimeConnected, sending, uploadProgress, members, canMentionEveryone, onAttachment, onDraft, onRemoveAttachment, linkUrl, linkPreviewRemoved, onRemoveLinkPreview, onRestoreLinkPreview, onSubmit }: MessageComposerProps) {
+export function MessageComposer({ attachment, channelName, draft, realtimeConnected, sending, uploadProgress, members, stickers, canMentionEveryone, focusRequestKey, onAttachment, onDraft, onRemoveAttachment, linkUrl, linkPreviewRemoved, onRemoveLinkPreview, onRestoreLinkPreview, onCreatePoll, onSendSticker, onSubmit }: MessageComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const textInput = useRef<HTMLTextAreaElement>(null);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [linkPreviewResult, setLinkPreviewResult] = useState<{ requestedUrl: string; preview: LinkPreview } | null>(null);
   const [linkPreviewLoading, setLinkPreviewLoading] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
   const mentionMatch = draft.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
   const mentionQuery = mentionMatch?.[1].toLowerCase() ?? null;
   const suggestions = useMemo(() => {
@@ -47,15 +58,14 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
   const selectMention = (username: string) => {
     onDraft(draft.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1@${username} `));
   };
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (!suggestions.length) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggestions.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
       setActiveSuggestion((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length);
-    } else if (event.key === "Enter" || event.key === "Tab") {
+    } else if (suggestions.length && (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();
       selectMention(suggestions[activeSuggestion]?.username ?? suggestions[0].username);
-    }
+    } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
   };
 
   useEffect(() => {
@@ -80,7 +90,12 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
 
   const visibleLinkPreview = !linkPreviewRemoved && linkPreviewResult?.requestedUrl === linkUrl ? linkPreviewResult.preview : null;
 
-  return <form className={styles.composer} onSubmit={onSubmit}>
+  useEffect(() => {
+    if (!focusRequestKey) return;
+    textInput.current?.focus();
+  }, [focusRequestKey]);
+
+  return <><form className={styles.composer} onSubmit={onSubmit}>
     {attachment ? <div className={styles.selectedFile}>
       <div className={styles.preview}>
         {attachment.kind === "image"
@@ -113,14 +128,13 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
     </div> : null}
 
     <div className={styles.inputBar}>
-      <button className={styles.addButton} type="button" onClick={() => fileInput.current?.click()} disabled={sending} aria-label="Adicionar foto ou vídeo"><span aria-hidden="true">+</span></button>
-      <input ref={fileInput} className={styles.fileInput} type="file" accept={CHAT_ATTACHMENT_ACCEPT} disabled={sending} onChange={(event) => { onAttachment(event.target.files?.[0]); event.target.value = ""; }} />
-      <input className={styles.textInput} maxLength={2000} value={draft} onChange={(event) => onDraft(event.target.value)} onKeyDown={handleKeyDown} placeholder={realtimeConnected ? `Mensagem em #${channelName}` : "Conectando ao chat..."} />
-      <button className={styles.toolButton} type="button" aria-label="Enviar presente"><Gift size={16} /></button>
-      <button className={styles.toolButton} type="button" aria-label="Emoji"><Smile size={17} /></button>
+      <ComposerExtras disabled={sending} stickers={stickers} onMedia={() => fileInput.current?.click()} onCreatePoll={onCreatePoll} onSendSticker={onSendSticker} />
+      <input ref={fileInput} className={styles.fileInput} type="file" accept={CHAT_ATTACHMENT_ACCEPT} disabled={sending} onChange={(event) => { const file = event.target.files?.[0]; if (file?.type.startsWith("image/") && file.type !== "image/gif") setCropFile(file); else onAttachment(file); event.target.value = ""; }} />
+      <textarea ref={textInput} className={styles.textInput} maxLength={2000} rows={1} value={draft} onChange={(event) => onDraft(event.target.value)} onKeyDown={handleKeyDown} placeholder={realtimeConnected ? `Mensagem em #${channelName}` : "Conectando ao chat..."} />
+      <div className={styles.emojiRoot}><button className={styles.toolButton} type="button" aria-label="Abrir emojis" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((open) => !open)}><Smile size={17} /></button>{emojiOpen ? <div className={styles.emojiPicker} role="dialog" aria-label="Teclado de emojis"><FynexEmojiPicker onEmoji={(emoji) => onDraft(`${draft}${emoji}`)} /></div> : null}</div>
       <button className={styles.sendButton} type="submit" disabled={sending || (!draft.trim() && !attachment)} aria-label="Enviar mensagem" onMouseDown={(event) => event.preventDefault()}>
         {sending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}
       </button>
     </div>
-  </form>;
+  </form>{cropFile && <ImageCropDialog file={cropFile} kind="chat" onCancel={() => setCropFile(null)} onConfirm={(blob) => { const original = cropFile; setCropFile(null); onAttachment(new File([blob], original.name.replace(/\.[^.]+$/, "") + ".webp", { type: "image/webp" })); }} />}</>;
 }

@@ -1,0 +1,26 @@
+.root { position: relative; flex: 0 0 auto; }
+.addButton { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid #30343e; border-radius: 10px; color: #d8dbe3; background: #1b1e26; cursor: pointer; }
+.addButton:hover, .addButton[aria-expanded="true"] { border-color: #555b69; background: #252933; }
+.addButton:disabled { opacity: .45; cursor: default; }
+.menu, .stickerPicker { position: absolute; z-index: 80; bottom: 44px; left: 0; border: 1px solid #2b303a; border-radius: 13px; background: #11141a; box-shadow: 0 20px 55px rgba(0,0,0,.55); }
+.menu { width: 250px; padding: 6px; }
+.menu > button { width: 100%; min-height: 50px; display: flex; align-items: center; gap: 11px; padding: 8px 10px; border: 0; border-radius: 9px; color: #c5c9d3; background: transparent; text-align: left; cursor: pointer; }
+.menu > button:hover { color: #fff; background: #20242d; }
+.menu > button > svg { color: #9299aa; }
+.menu span { display: grid; gap: 3px; }.menu strong { font-size: 10px; }.menu small { color: #777e8e; font-size: 7px; }
+.stickerPicker { width: 320px; padding: 10px; }
+.stickerPicker header { display: flex; align-items: center; justify-content: space-between; padding: 3px 4px 11px; color: #8d94a3; }
+.stickerPicker header > span { display: grid; gap: 3px; }.stickerPicker header strong { font-size: 8px; letter-spacing: .1em; }.stickerPicker header small { color: #656c79; font-size: 7px; }
+.stickerPicker header button { width: 25px; height: 25px; display: grid; place-items: center; border: 0; border-radius: 7px; color: #969ca9; background: #1c2028; cursor: pointer; }
+.stickerPicker > div:not(.emptyStickers) { max-height: 300px; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; overflow-y: auto; }
+.stickerPicker > div > button { min-width: 0; min-height: 104px; display: grid; place-items: center; gap: 6px; padding: 8px; border: 0; border-radius: 11px; color: #d7d9df; background: #191d24; cursor: pointer; }
+.stickerPicker > div > button:hover { background: #252a34; }
+.stickerPicker > div > button img { width: 72px; height: 72px; object-fit: contain; }.stickerPicker > div > button small { max-width: 84px; overflow: hidden; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.emptyStickers { min-height: 150px; display: grid; place-items: center; align-content: center; gap: 6px; color: #686f7c; text-align: center; }.emptyStickers strong { color: #a8aeba; font-size: 10px; }.emptyStickers small { max-width: 190px; font-size: 8px; line-height: 1.5; }
+.backdrop { position: fixed; z-index: 180; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.72); backdrop-filter: blur(8px); }
+.pollModal { width: min(470px, 100%); box-sizing: border-box; padding: 18px; border: 1px solid #303540; border-radius: 18px; color: #e7e9ee; background: #11141a; box-shadow: 0 30px 90px rgba(0,0,0,.65); }
+.pollModal > header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }.pollModal h2 { margin: 4px 0 0; font-size: 20px; }.pollModal header small, .options > span { color: #858c9b; font-size: 7px; font-weight: 800; letter-spacing: .13em; }.pollModal header > button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 9px; color: #9da3af; background: #20242c; cursor: pointer; }
+.pollModal > label { display: grid; gap: 7px; color: #aeb3be; font-size: 9px; font-weight: 700; }.pollModal input { width: 100%; height: 43px; box-sizing: border-box; border: 1px solid #303540; border-radius: 10px; outline: 0; color: #f0f1f4; background: #0a0c10; padding: 0 12px; font: inherit; }.pollModal input:focus { border-color: #6b7180; }
+.options { display: grid; gap: 7px; margin-top: 17px; }.options label { display: flex; align-items: center; gap: 8px; }.options i { width: 24px; height: 24px; display: grid; place-items: center; flex: 0 0 24px; border-radius: 7px; color: #a8aeba; background: #20242c; font-size: 8px; font-style: normal; }.options label button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; color: #a5aab5; background: #20242c; cursor: pointer; }
+.addOption { margin: 9px 0 0 32px; display: flex; align-items: center; gap: 6px; border: 0; color: #aeb4c0; background: transparent; font-size: 8px; cursor: pointer; }.pollModal footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }.pollModal footer button { min-height: 36px; padding: 0 14px; border: 1px solid #303540; border-radius: 9px; color: #bfc3cc; background: #1b1f27; cursor: pointer; }.pollModal footer .primary { color: #fff; border-color: #5f6574; background: #454b58; }.pollModal footer button:disabled { opacity: .4; cursor: default; }
+@media (max-width: 720px) { .menu { width: 230px; }.stickerPicker { position: fixed; right: 10px; bottom: 72px; left: 10px; width: auto; }.backdrop { align-items: end; padding: 10px; }.pollModal { border-radius: 18px 18px 12px 12px; } }

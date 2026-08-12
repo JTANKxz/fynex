@@ -11,6 +11,21 @@ class SpotifyRequestError extends Error {
   }
 }
 
+type SpotifyApiTrack = { id: string; name: string; artists: Array<{ name: string }>; album: { images: Array<{ url: string }> }; preview_url: string | null; duration_ms: number; external_urls: { spotify: string } };
+
+function toSpotifyTrack(track: SpotifyApiTrack): SpotifyTrack {
+  return {
+    id: track.id,
+    name: track.name,
+    artist: track.artists.map((artist) => artist.name).join(", "),
+    coverUrl: track.album.images.at(-1)?.url ?? track.album.images[0]?.url ?? null,
+    previewUrl: track.preview_url,
+    spotifyUrl: track.external_urls.spotify,
+    durationMs: track.duration_ms,
+    startSeconds: 0,
+  };
+}
+
 async function spotifyFailure(response: Response) {
   const body = await response.json().catch(() => null) as { error?: string | { message?: string; reason?: string } } | null;
   const error = typeof body?.error === "object" ? body.error : null;
@@ -46,12 +61,18 @@ export async function GET(request: Request) {
   const { data } = await supabase.auth.getClaims();
   if (!data?.claims?.sub) return Response.json({ error: "Entre na sua conta para buscar músicas." }, { status: 401 });
 
-  const query = new URL(request.url).searchParams.get("q")?.trim();
-  if (!query || query.length < 2 || query.length > 80) return Response.json({ error: "Digite entre 2 e 80 caracteres." }, { status: 400 });
+  const params = new URL(request.url).searchParams;
+  const query = params.get("q")?.trim();
+  const trackId = params.get("id")?.trim();
+  if (trackId && !/^[A-Za-z0-9]{1,64}$/.test(trackId)) return Response.json({ error: "Faixa inválida." }, { status: 400 });
+  if (!trackId && (!query || query.length < 2 || query.length > 80)) return Response.json({ error: "Digite entre 2 e 80 caracteres." }, { status: 400 });
   try {
     const token = await getSpotifyToken();
     if (!token) return Response.json({ error: "Spotify ainda não foi configurado no FYNEX." }, { status: 503 });
-    const response = await fetch(`https://api.spotify.com/v1/search?${new URLSearchParams({ q: query, type: "track", limit: "8", market: "BR" })}`, {
+    const endpoint = trackId
+      ? `https://api.spotify.com/v1/tracks/${trackId}?market=BR`
+      : `https://api.spotify.com/v1/search?${new URLSearchParams({ q: query!, type: "track", limit: "8", market: "BR" })}`;
+    const response = await fetch(endpoint, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -60,15 +81,9 @@ export async function GET(request: Request) {
       console.error("[spotify] search rejected", { status: response.status, reason: failure.reason, message: failure.message });
       throw new SpotifyRequestError("search", response.status, failure.reason);
     }
-    const data = await response.json() as { tracks?: { items?: Array<{ id: string; name: string; artists: Array<{ name: string }>; album: { images: Array<{ url: string }> }; preview_url: string | null; external_urls: { spotify: string } }> } };
-    const tracks: SpotifyTrack[] = (data.tracks?.items ?? []).map((track) => ({
-      id: track.id,
-      name: track.name,
-      artist: track.artists.map((artist) => artist.name).join(", "),
-      coverUrl: track.album.images.at(-1)?.url ?? track.album.images[0]?.url ?? null,
-      previewUrl: track.preview_url,
-      spotifyUrl: track.external_urls.spotify,
-    }));
+    if (trackId) return Response.json({ track: toSpotifyTrack(await response.json() as SpotifyApiTrack) }, { headers: { "Cache-Control": "private, max-age=300" } });
+    const data = await response.json() as { tracks?: { items?: SpotifyApiTrack[] } };
+    const tracks: SpotifyTrack[] = (data.tracks?.items ?? []).map(toSpotifyTrack);
     return Response.json({ tracks }, { headers: { "Cache-Control": "private, max-age=30" } });
   } catch (error) {
     if (error instanceof SpotifyRequestError) {

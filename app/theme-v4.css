@@ -122,6 +122,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 /* Comunidades e canais. */
 .community-header { min-height: 64px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.community-header.has-banner { background-position: center; background-repeat: no-repeat; background-size: 100% 100%, contain; }
 .community-header strong { font-size: 15px; font-weight: 700; text-shadow: none; }
 .community-header button { border-radius: 7px; color: #9299a8; background: transparent; }
 .community-header button:hover { color: #fff; background: var(--surface-hover); }
@@ -222,7 +223,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .auth-form label, .profile-form label, .community-form label { color: #abb0ba; font-size: 12px; font-weight: 600; }
 .auth-form input, .profile-form input:not([type=color]), .profile-form textarea, .community-form input:not([type=color]), .community-form textarea, .social-form input, .social-form select, .join-policy-form select, .settings-select select { border-color: var(--line); border-radius: 9px; color: #f1f2f5; background: #0b0e14; }
 .auth-form input:focus, .profile-form input:focus, .profile-form textarea:focus, .community-form input:focus, .community-form textarea:focus { border-color: #7167df; box-shadow: 0 0 0 3px rgba(113,103,223,.14); }
-.auth-submit, .social-form button, .join-policy-form button, .community-code button { border-radius: 9px; background: #665bd8; box-shadow: none; }
+.auth-submit, .social-form > button, .join-policy-form > button, .community-code > button { border-radius: 9px; background: #665bd8; box-shadow: none; }
 .auth-switch a { color: #aaa4eb; }
 
 /* Perfil. */
@@ -233,7 +234,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .profile-route-header span { color: #9d96e7; font-size: 9px; letter-spacing: .1em; }.profile-route-header strong { font-size: 13px; }
 .profile-stage { min-height: 620px; border-color: var(--line); border-radius: 16px; background: #0f1219; box-shadow: none; }
 .profile-ambient, .profile-cover::after { display: none; }
-.profile-cover { height: 260px; background: color-mix(in srgb, var(--profile-accent) 48%, #171b24); }
+.profile-cover { height: clamp(230px, 30vw, 360px); background: color-mix(in srgb, var(--profile-accent) 48%, #171b24); }
+.profile-cover.has-image { background-position: center; background-repeat: no-repeat; background-size: 100% 100%, contain; }
+.profile-media-card.banner-card .media-preview { background-color: #0b0e14; background-repeat: no-repeat !important; background-size: contain !important; }
 .profile-identity-row { grid-template-columns: 116px minmax(0,1fr) auto; margin-top: -58px; padding: 0 34px; }
 .profile-avatar-large { width: 116px; height: 116px; border-color: #0f1219; border-radius: 50%; box-shadow: none; }
 .profile-presence { border-color: #0f1219; }
@@ -260,7 +263,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .settings-switches .noise-cancellation-control { background: #151922; }.noise-cancellation-control em, .settings-switches strong em { color: #bcb7ed; background: #29264b; }
 .mic-test button { border-color: #48438b; color: #d5d1f5; background: #29264b; }.mic-test > div i { background: #7167df; }
 .microphone-volume input, .settings-switches input { accent-color: #7167df; }
-.account-danger-zone { border-radius: 10px; background: #211418; }
+.account-danger-zone { gap: 8px; margin-top: 18px; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+.account-danger-zone strong { color: #b49ca2; }
+.account-danger-zone > button { min-height: 30px; justify-self: start; padding: 0 4px; border: 0; color: #a96f79; background: transparent; font-size: 8px; }
+.account-danger-zone > button:hover { color: #f0a5b1; background: transparent; }
+.channel-danger-zone { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.channel-danger-zone > button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 4px; border: 0; color: #a96f79; background: transparent; font: inherit; font-size: 9px; cursor: pointer; }
+.channel-danger-zone form { display: grid; gap: 10px; padding: 11px; border: 1px solid #493038; border-radius: 9px; background: #1b1418; }
+.channel-danger-zone form p, .channel-danger-zone form small { margin: 0; color: #bda8ae; font-size: 9px; }
+.channel-danger-zone form > div { display: flex; justify-content: flex-end; gap: 8px; }
+.channel-danger-zone form button { min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: #b5bac5; background: #151922; font: inherit; font-size: 8px; cursor: pointer; }
+.channel-danger-zone form button[type="submit"] { border-color: #623742; color: #f3b2be; background: #301a20; }
+.moderation-notice { bottom: 92px; }
 
 /* Voz e transmissão. */
 .voice-room-stage, .screen-stage { border-color: var(--line); border-radius: 12px; background: #090b10; box-shadow: 0 24px 75px rgba(0,0,0,.55); }
@@ -320,7 +334,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .profile-route-modal { width: 100%; max-height: 100dvh; height: 100dvh; border: 0; border-radius: 0; }
   .profile-route-content { padding: 0; }
   .profile-stage { min-height: 100%; border: 0; border-radius: 0; }
-  .profile-cover { height: 210px; padding: 22px; }
+  .profile-cover { height: clamp(170px, 48vw, 230px); padding: 22px; }
   .profile-identity-row { grid-template-columns: 92px minmax(0,1fr); gap: 14px; margin-top: -46px; padding: 0 18px; }
   .profile-avatar-large { width: 92px; height: 92px; border-width: 6px; }
   .profile-edit-button { grid-column: 1 / -1; justify-self: stretch; justify-content: center; margin-top: 12px; }

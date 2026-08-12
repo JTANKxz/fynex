@@ -3,12 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { ROLE_ICON_NAMES } from "@/features/community/role-icons";
 
 const checkbox = z.enum(["on"]).optional().transform(Boolean);
 const roleSchema = z.object({
   communityId: z.uuid(),
   name: z.string().trim().min(1).max(32),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  colorMode: z.enum(["solid", "rgb"]).default("solid"),
+  icon: z.enum(ROLE_ICON_NAMES),
+  customIconId: z.union([z.uuid(), z.literal("")]).optional().transform((value) => value || null),
   position: z.coerce.number().int().min(1).max(32000),
   isAdmin: checkbox,
   manageChannels: checkbox,
@@ -35,6 +39,9 @@ export async function createCommunityRoleAction(_state: RoleActionState, formDat
     community_id: parsed.data.communityId,
     name: parsed.data.name,
     color: parsed.data.color,
+    color_mode: parsed.data.colorMode,
+    icon: parsed.data.icon,
+    custom_icon_id: parsed.data.customIconId,
     position: parsed.data.position,
     is_admin: parsed.data.isAdmin,
     manage_channels: parsed.data.manageChannels,
@@ -97,4 +104,61 @@ export async function removeCommunityMemberAction(_state: RoleActionState, formD
   if (error || !count) return { error: "Você não pode remover esse membro. O criador é sempre protegido." };
   revalidatePath("/");
   return { success: "Membro removido da comunidade." };
+}
+
+export async function banCommunityMemberAction(_state: RoleActionState, formData: FormData): Promise<RoleActionState> {
+  const parsed = removeMemberSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Membro inválido." };
+  const { supabase, userId } = await authenticatedClient();
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { error: banError } = await supabase.from("community_bans").insert({
+    community_id: parsed.data.communityId,
+    user_id: parsed.data.userId,
+    banned_by: userId,
+  });
+  if (banError?.code !== "23505" && banError) return { error: "Você não pode banir esse membro. O criador e cargos superiores são protegidos." };
+
+  const { error: removeError } = await supabase.from("community_members").delete()
+    .eq("community_id", parsed.data.communityId)
+    .eq("user_id", parsed.data.userId);
+  if (removeError) {
+    if (!banError) await supabase.from("community_bans").delete().eq("community_id", parsed.data.communityId).eq("user_id", parsed.data.userId);
+    return { error: "O banimento não pôde ser concluído." };
+  }
+  revalidatePath("/");
+  return { success: "Membro banido da comunidade." };
+}
+
+export async function revokeCommunityBanAction(_state: RoleActionState, formData: FormData): Promise<RoleActionState> {
+  const parsed = removeMemberSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Banimento inválido." };
+  const { supabase, userId } = await authenticatedClient();
+  if (!userId) return { error: "Sua sessão expirou." };
+  const { error, count } = await supabase.from("community_bans").delete({ count: "exact" }).eq("community_id", parsed.data.communityId).eq("user_id", parsed.data.userId);
+  if (error || !count) return { error: "Não foi possível remover este banimento." };
+  revalidatePath("/");
+  return { success: "Banimento removido. A pessoa pode entrar novamente." };
+}
+
+const voiceModerationSchema = z.object({
+  communityId: z.uuid(),
+  channelId: z.uuid(),
+  userId: z.uuid(),
+  operation: z.enum(["mute", "disconnect"]),
+});
+
+export async function moderateVoiceMemberAction(input: unknown): Promise<{ success?: true; error?: string }> {
+  const parsed = voiceModerationSchema.safeParse(input);
+  if (!parsed.success) return { error: "Ação de voz inválida." };
+  const { supabase, userId } = await authenticatedClient();
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+  const { error } = await supabase.from("voice_moderation_events").insert({
+    community_id: parsed.data.communityId,
+    channel_id: parsed.data.channelId,
+    target_user_id: parsed.data.userId,
+    actor_id: userId,
+    action: parsed.data.operation,
+  });
+  return error ? { error: "Você não pode moderar este participante." } : { success: true };
 }

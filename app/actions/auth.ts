@@ -9,9 +9,10 @@ export async function loginAction(_state: ActionState, formData: FormData): Prom
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados." };
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  const { error } = await supabase.auth.signInWithPassword({ email: parsed.data.email, password: parsed.data.password });
   if (error) return { error: "E-mail ou senha incorretos." };
-  redirect("/");
+  const destination = parsed.data.next?.startsWith("/") && !parsed.data.next.startsWith("//") ? parsed.data.next : "/";
+  redirect(destination);
 }
 
 export async function registerAction(_state: ActionState, formData: FormData): Promise<ActionState> {
@@ -31,7 +32,8 @@ export async function registerAction(_state: ActionState, formData: FormData): P
     if (error.message.toLowerCase().includes("already")) return { error: "Este e-mail ou usuário já está em uso." };
     return { error: "Não foi possível criar a conta. Tente novamente." };
   }
-  if (data.session) redirect("/");
+  const destination = parsed.data.next?.startsWith("/") && !parsed.data.next.startsWith("//") ? parsed.data.next : "/";
+  if (data.session) redirect(destination);
   redirect("/login?status=account-created");
 }
 

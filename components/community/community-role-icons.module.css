@@ -1,0 +1,8 @@
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:7px;margin-top:12px}
+.grid form{position:relative;min-width:0;display:grid;grid-template-columns:42px minmax(0,1fr);align-items:center;gap:8px;padding:8px;border-radius:10px;background:#1c2028}
+.grid img{width:42px;height:42px;object-fit:contain}
+.grid span,.grid small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid span{color:#d8dbe2;font-size:8px;font-weight:800}
+.grid small{grid-column:2;color:#737b89;font-size:7px}
+.grid button{position:absolute;right:3px;top:3px;display:grid;place-items:center;border:0;color:#d77d8d;background:transparent;cursor:pointer}
+.grid>p{color:#777f8c;font-size:9px}

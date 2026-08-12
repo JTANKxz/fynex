@@ -1,0 +1,6 @@
+.list { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 7px; }
+.reaction { min-width: 38px; height: 27px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 8px; border: 1px solid #2b303b; border-radius: 8px; color: #aeb4c0; background: #171b23; font: inherit; font-size: 12px; cursor: pointer; }
+.reaction span { color: #858c9a; font-size: 9px; font-weight: 700; }
+.reaction:hover { border-color: #514b91; background: #201e35; }
+.reaction.active { color: #fff; border-color: #625ab9; background: #29264b; }
+.fullPicker{margin-bottom:7px;overflow:hidden;border-radius:12px}

@@ -57,3 +57,53 @@ export async function cropImageToWebp(file: File, crop: PixelCrop, kind: "avatar
   if (blob.size > target.maxBytes) throw new Error("Não foi possível comprimir a imagem dentro do limite.");
   return blob;
 }
+
+export async function cropChatImageToWebp(file: File, crop: PixelCrop) {
+  const bitmap = await decodeImage(file);
+  const scale = Math.min(1, 1800 / Math.max(crop.width, crop.height));
+  const width = Math.max(1, Math.round(crop.width * scale));
+  const height = Math.max(1, Math.round(crop.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) { bitmap.close?.(); throw new Error("Seu navegador não conseguiu editar a imagem."); }
+  context.fillStyle = "#000";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(bitmap, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
+  bitmap.close?.();
+  return canvasBlob(canvas, .88);
+}
+
+export async function prepareStickerImage(file: File) {
+  if (file.type === "image/gif") {
+    if (file.size > 1_000_000) throw new Error("GIFs animados podem ter no máximo 1 MB.");
+    return file;
+  }
+
+  const bitmap = await decodeImage(file);
+  const largestSide = Math.max(bitmap.width, bitmap.height);
+  const scale = Math.min(1, 512 / largestSide);
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!context) {
+    bitmap.close?.();
+    throw new Error("Seu navegador não conseguiu preparar a figurinha.");
+  }
+  context.clearRect(0, 0, 512, 512);
+  context.drawImage(bitmap, (512 - width) / 2, (512 - height) / 2, width, height);
+  bitmap.close?.();
+
+  let quality = .9;
+  let blob = await canvasBlob(canvas, quality);
+  while (blob.size > 900_000 && quality > .5) {
+    quality -= .08;
+    blob = await canvasBlob(canvas, quality);
+  }
+  if (blob.size > 1_000_000) throw new Error("Não foi possível comprimir essa imagem para figurinha.");
+  return blob;
+}

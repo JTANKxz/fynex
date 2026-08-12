@@ -22,7 +22,20 @@ const messageSchema = z.object({
   replyToId: z.uuid().nullable().optional(),
   includeLinkPreview: z.boolean().optional(),
   attachment: attachmentSchema.optional(),
-}).refine((value) => value.content.length > 0 || value.attachment, { message: "Mensagem vazia" });
+  poll: z.object({
+    question: z.string().trim().min(1).max(160),
+    options: z.array(z.string().trim().min(1).max(80)).min(2).max(6),
+  }).optional(),
+  stickerId: z.uuid().optional(),
+}).superRefine((value, context) => {
+  const kinds = Number(Boolean(value.poll)) + Number(Boolean(value.stickerId));
+  if (kinds > 1 || (!value.content && !value.attachment && !value.poll && !value.stickerId)) {
+    context.addIssue({ code: "custom", message: "Mensagem vazia" });
+  }
+  if (value.poll && new Set(value.poll.options.map((option) => option.toLocaleLowerCase("pt-BR"))).size !== value.poll.options.length) {
+    context.addIssue({ code: "custom", message: "As opções da enquete devem ser diferentes." });
+  }
+});
 
 const ALLOWED_MEDIA = {
   image: { mime: new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]), maxSize: 8_000_000 },
@@ -43,6 +56,27 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   const { data: authData } = await supabase.auth.getClaims();
   const userId = authData?.claims?.sub;
   if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { data: channel } = await supabase.from("channels")
+    .select("id, community_id, type")
+    .eq("id", parsed.data.channelId)
+    .maybeSingle();
+  if (!channel || channel.type !== "text") return { error: "Este canal não está mais disponível para mensagens. Atualize a comunidade e tente novamente." };
+  const { data: membership } = await supabase.from("community_members")
+    .select("user_id")
+    .eq("community_id", channel.community_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!membership) return { error: "Você não participa mais desta comunidade. Atualize a página." };
+
+  if (parsed.data.stickerId) {
+    const { data: sticker } = await supabase.from("community_stickers")
+      .select("id")
+      .eq("id", parsed.data.stickerId)
+      .eq("community_id", channel.community_id)
+      .maybeSingle();
+    if (!sticker) return { error: "Essa figurinha não pertence a esta comunidade." };
+  }
 
   const attachment = parsed.data.attachment;
   let verified: Awaited<ReturnType<typeof getImageKitFile>> = null;
@@ -81,6 +115,10 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     channel_id: parsed.data.channelId,
     author_id: userId,
     content: parsed.data.content,
+    message_kind: parsed.data.poll ? "poll" : parsed.data.stickerId ? "sticker" : "text",
+    poll_question: parsed.data.poll?.question ?? null,
+    poll_options: parsed.data.poll?.options ?? null,
+    sticker_id: parsed.data.stickerId ?? null,
     reply_to_id: parsed.data.replyToId ?? null,
     attachment_kind: attachment?.kind ?? null,
     attachment_url: verified?.url ?? null,
@@ -100,6 +138,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   if (error || !data) {
     if (attachment) await deleteImageKitFile(attachment.fileId);
     if (/@todos/i.test(parsed.data.content) && error?.code === "42501") return { error: "Somente administradores podem mencionar @todos." };
+    if (error?.code === "23514") return { error: "A mensagem não passou na validação do canal. Revise o conteúdo e tente novamente." };
     return { error: "Não foi possível enviar a mensagem neste canal." };
   }
   return { data };
@@ -129,4 +168,58 @@ export async function deleteMessageAction(input: unknown): Promise<{ success?: t
     await deleteImageKitFile(message.attachment_file_id).catch(() => undefined);
   }
   return { success: true };
+}
+
+const reactionSchema = z.object({
+  messageId: z.uuid(),
+  emoji: z.string().min(1).max(16).regex(/\p{Extended_Pictographic}/u),
+});
+
+export async function toggleMessageReactionAction(input: unknown): Promise<{ active?: boolean; error?: string }> {
+  const parsed = reactionSchema.safeParse(input);
+  if (!parsed.success) return { error: "Reação inválida." };
+
+  const supabase = await createClient();
+  const { data: authData } = await supabase.auth.getClaims();
+  const userId = authData?.claims?.sub;
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const key = { message_id: parsed.data.messageId, user_id: userId, emoji: parsed.data.emoji };
+  const { data: existing, error: lookupError } = await supabase
+    .from("message_reactions")
+    .select("message_id")
+    .match(key)
+    .maybeSingle();
+  if (lookupError) return { error: "Não foi possível atualizar a reação." };
+
+  if (existing) {
+    const { error } = await supabase.from("message_reactions").delete().match(key);
+    return error ? { error: "Não foi possível remover a reação." } : { active: false };
+  }
+
+  const { error } = await supabase.from("message_reactions").insert(key);
+  if (error?.code === "23505") return { active: true };
+  return error ? { error: "Você não pode reagir a esta mensagem." } : { active: true };
+}
+
+const pollVoteSchema = z.object({
+  messageId: z.uuid(),
+  optionIndex: z.number().int().min(0).max(5),
+});
+
+export async function votePollAction(input: unknown): Promise<{ success?: true; error?: string }> {
+  const parsed = pollVoteSchema.safeParse(input);
+  if (!parsed.success) return { error: "Voto inválido." };
+
+  const supabase = await createClient();
+  const { data: authData } = await supabase.auth.getClaims();
+  const userId = authData?.claims?.sub;
+  if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
+
+  const { error } = await supabase.from("poll_votes").upsert({
+    message_id: parsed.data.messageId,
+    user_id: userId,
+    option_index: parsed.data.optionIndex,
+  }, { onConflict: "message_id,user_id" });
+  return error ? { error: "Não foi possível registrar seu voto." } : { success: true };
 }

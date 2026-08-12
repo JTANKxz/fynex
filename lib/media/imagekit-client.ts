@@ -28,7 +28,18 @@ export function uploadToImageKit(file: Blob, token: ImageKitUploadToken, onProgr
     };
     request.onerror = () => reject(new Error("A conexão com o ImageKit falhou."));
     request.onload = () => {
-      if (request.status >= 200 && request.status < 300) resolve(request.response as ImageKitUploadResult);
+      if (request.status >= 200 && request.status < 300) {
+        const raw = request.response as Record<string, unknown>;
+        resolve({
+          fileId: String(raw.fileId ?? raw.file_id ?? ""),
+          filePath: String(raw.filePath ?? raw.file_path ?? ""),
+          url: String(raw.url ?? ""),
+          width: typeof raw.width === "number" ? raw.width : undefined,
+          height: typeof raw.height === "number" ? raw.height : undefined,
+          size: typeof raw.size === "number" ? raw.size : undefined,
+          mime: typeof raw.mime === "string" ? raw.mime : undefined,
+        });
+      }
       else reject(new Error(request.response?.message ?? "O ImageKit recusou o arquivo."));
     };
     request.send(body);

@@ -20,6 +20,9 @@ export async function updateProfileAction(_state: ActionState, formData: FormDat
     } catch { return null; }
   };
   const hasSong = !!(parsed.data.songId && parsed.data.songName && parsed.data.songArtist);
+  const songDurationMs = typeof parsed.data.songDurationMs === "number" ? parsed.data.songDurationMs : null;
+  const maxSongStart = songDurationMs ? Math.max(0, Math.floor(songDurationMs / 1000) - 30) : 0;
+  const songStartSeconds = typeof parsed.data.songStartSeconds === "number" ? Math.min(parsed.data.songStartSeconds, maxSongStart) : 0;
 
   const { error } = await supabase.from("profiles").update({
     display_name: parsed.data.displayName,
@@ -33,6 +36,8 @@ export async function updateProfileAction(_state: ActionState, formData: FormDat
     profile_song_cover_url: hasSong ? safeSpotifyUrl(parsed.data.songCoverUrl, ["scdn.co"]) : null,
     profile_song_preview_url: hasSong ? safeSpotifyUrl(parsed.data.songPreviewUrl, ["scdn.co"]) : null,
     profile_song_spotify_url: hasSong ? safeSpotifyUrl(parsed.data.songSpotifyUrl, ["open.spotify.com"]) : null,
+    profile_song_duration_ms: hasSong ? songDurationMs : null,
+    profile_song_start_seconds: hasSong ? songStartSeconds : 0,
   }).eq("id", userId);
 
   if (error?.code === "23505") return { error: "Este nome de usuário já está em uso." };

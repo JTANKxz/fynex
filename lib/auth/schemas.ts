@@ -3,6 +3,7 @@ import { z } from "zod";
 export const loginSchema = z.object({
   email: z.email("Digite um e-mail válido.").max(254),
   password: z.string().min(1, "Digite sua senha.").max(72),
+  next: z.string().max(500).optional(),
 });
 
 export const registerSchema = z.object({
@@ -10,6 +11,7 @@ export const registerSchema = z.object({
   username: z.string().trim().toLowerCase().regex(/^[a-z0-9_]{3,24}$/, "Use 3–24 letras minúsculas, números ou _.") ,
   email: z.email("Digite um e-mail válido.").max(254),
   password: z.string().min(10, "Use pelo menos 10 caracteres.").max(72),
+  next: z.string().max(500).optional(),
 });
 
 export const profileSchema = z.object({
@@ -24,6 +26,8 @@ export const profileSchema = z.object({
   songCoverUrl: z.url().max(500).optional().or(z.literal("")),
   songPreviewUrl: z.url().max(500).optional().or(z.literal("")),
   songSpotifyUrl: z.url().max(500).optional().or(z.literal("")),
+  songDurationMs: z.coerce.number().int().min(30000).max(86400000).optional().or(z.literal("")),
+  songStartSeconds: z.coerce.number().int().min(0).max(86400).optional().or(z.literal("")),
 });
 
 export type ActionState = { error?: string; success?: string };

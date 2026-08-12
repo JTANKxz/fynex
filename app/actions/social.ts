@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 
-export type SocialActionState = { error?: string; success?: string };
+export type SocialActionState = { error?: string; success?: string; inviteToken?: string };
 
 const usernameSchema = z.string().trim().toLowerCase().regex(/^[a-z0-9_]{3,24}$/);
 const uuidSchema = z.uuid();
@@ -136,8 +137,87 @@ export async function updateJoinPolicyAction(_state: SocialActionState, formData
   if (!communityId.success || !joinPolicy.success) return { error: "Configuração inválida." };
   const { supabase, userId } = await authenticatedUserId();
   if (!userId) return { error: "Sua sessão expirou." };
-  const { error } = await supabase.from("communities").update({ join_policy: joinPolicy.data }).eq("id", communityId.data).eq("owner_id", userId);
-  if (error) return { error: "Somente o dono pode alterar a entrada." };
+  const { data: updated, error } = await supabase.from("communities").update({ join_policy: joinPolicy.data }).eq("id", communityId.data).select("id").maybeSingle();
+  if (error || !updated) return { error: "Você não tem permissão para alterar a entrada." };
   revalidatePath("/");
   return { success: "Regra de entrada atualizada." };
+}
+
+export async function createCommunityInviteLinkAction(_state: SocialActionState, formData: FormData): Promise<SocialActionState> {
+  const communityId = uuidSchema.safeParse(formData.get("communityId"));
+  if (!communityId.success) return { error: "Comunidade inválida." };
+  const { supabase, userId } = await authenticatedUserId();
+  if (!userId) return { error: "Sua sessão expirou." };
+
+  const { data: existing } = await supabase
+    .from("community_invite_links")
+    .select("token")
+    .eq("community_id", communityId.data)
+    .is("revoked_at", null)
+    .maybeSingle();
+  if (existing?.token) return { success: "Link de convite pronto.", inviteToken: existing.token };
+
+  const { data, error } = await supabase
+    .from("community_invite_links")
+    .insert({ community_id: communityId.data, created_by: userId })
+    .select("token")
+    .single();
+  if (error?.code === "23505") {
+    const { data: permanent } = await supabase.from("community_invite_links").select("token").eq("community_id", communityId.data).maybeSingle();
+    if (permanent?.token) return { success: "Link permanente pronto.", inviteToken: permanent.token };
+  }
+  if (error || !data) return { error: "Você não tem permissão para criar o link permanente." };
+  return { success: "Link de convite criado.", inviteToken: data.token };
+}
+
+export async function redeemCommunityInviteAction(token: string): Promise<SocialActionState> {
+  const parsedToken = z.string().regex(/^[a-f0-9]{36}$/).safeParse(token);
+  if (!parsedToken.success) return { error: "Este convite não é válido." };
+  const { supabase, userId } = await authenticatedUserId();
+  if (!userId) return { error: "Entre na sua conta para aceitar o convite." };
+  const { data: communityId, error } = await supabase.rpc("redeem_community_invite", { invite_token: parsedToken.data });
+  if (error) return { error: error.message.includes("expired") ? "Este convite expirou ou foi desativado." : "Não foi possível aceitar este convite." };
+  revalidatePath("/");
+  const { data: membership } = await supabase.from("community_members").select("community_id").eq("community_id", communityId).eq("user_id", userId).maybeSingle();
+  if (membership) redirect(`/?community=${communityId}`);
+  return { success: "Solicitação enviada. Um administrador precisa aprovar sua entrada." };
+}
+
+export async function joinCommunityByInviteLinkAction(_state: SocialActionState, formData: FormData): Promise<SocialActionState> {
+  const raw = z.string().trim().max(500).safeParse(formData.get("inviteLink"));
+  if (!raw.success) return { error: "Cole um link de convite válido." };
+  const token = raw.data.match(/(?:\/invite\/|^)([a-f0-9]{36})(?:[/?#]|$)/i)?.[1]?.toLowerCase();
+  if (!token) return { error: "Este link de convite não é válido." };
+  return redeemCommunityInviteAction(token);
+}
+
+export async function blockUserAction(_state: SocialActionState, formData: FormData): Promise<SocialActionState> {
+  const targetUserId = uuidSchema.safeParse(formData.get("targetUserId"));
+  const blocked = z.enum(["true", "false"]).safeParse(formData.get("blocked"));
+  if (!targetUserId.success || !blocked.success) return { error: "Usuário inválido." };
+  const { supabase, userId } = await authenticatedUserId();
+  if (!userId) return { error: "Sua sessão expirou." };
+  if (targetUserId.data === userId) return { error: "Você não pode bloquear a si mesmo." };
+
+  if (blocked.data === "true") {
+    const { error } = await supabase.from("user_blocks").upsert({ blocker_id: userId, blocked_id: targetUserId.data });
+    if (error) return { error: "Não foi possível bloquear este usuário." };
+    return { success: "Usuário bloqueado." };
+  }
+  const { error } = await supabase.from("user_blocks").delete().eq("blocker_id", userId).eq("blocked_id", targetUserId.data);
+  if (error) return { error: "Não foi possível desbloquear este usuário." };
+  return { success: "Usuário desbloqueado." };
+}
+
+export async function openDirectConversationAction(targetUserId: string): Promise<{ conversationId?: string; error?: string }> {
+  const target = uuidSchema.safeParse(targetUserId);
+  if (!target.success) return { error: "Usuário inválido." };
+  const { supabase, userId } = await authenticatedUserId();
+  if (!userId) return { error: "Sua sessão expirou." };
+  const [userA, userB] = [userId, target.data].sort();
+  const { data: existing } = await supabase.from("direct_conversations").select("id").eq("user_a", userA).eq("user_b", userB).maybeSingle();
+  if (existing) return { conversationId: existing.id };
+  const { data, error } = await supabase.from("direct_conversations").insert({ user_a: userA, user_b: userB }).select("id").single();
+  if (error || !data) return { error: "A conversa privada só pode ser aberta entre amigos que não se bloquearam." };
+  return { conversationId: data.id };
 }

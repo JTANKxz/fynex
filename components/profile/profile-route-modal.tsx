@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { X } from "lucide-react";
+import { LogOut, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { logoutAction } from "@/app/actions/auth";
 import { ProfileExperience } from "@/components/profile/profile-experience";
 import type { Profile } from "@/lib/supabase/database.types";
 
@@ -30,9 +31,16 @@ export function ProfileRouteModal({ profile }: { profile: Profile }) {
             <span>PERFIL</span>
             <strong id="profile-route-title">Sua identidade no FYNEX</strong>
           </div>
-          <button type="button" onClick={() => router.back()} aria-label="Fechar perfil">
-            <X size={19} />
-          </button>
+          <div className="profile-route-actions">
+            <form action={logoutAction}>
+              <button type="submit" className="profile-logout-button" aria-label="Sair da conta" title="Sair da conta">
+                <LogOut size={17} />
+              </button>
+            </form>
+            <button type="button" onClick={() => router.back()} aria-label="Fechar perfil">
+              <X size={19} />
+            </button>
+          </div>
         </header>
         <div className="profile-route-content">
           <ProfileExperience profile={profile} />

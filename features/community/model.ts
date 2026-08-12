@@ -4,7 +4,8 @@ import type { LinkPreview } from "@/lib/links";
 export type PresenceStatus = "online" | "idle" | "dnd" | "invisible";
 export type CommunityUser = { id: string; name: string; username?: string; color: string; avatarUrl?: string | null; status?: PresenceStatus };
 export type MessageAttachment = { kind: "image" | "video"; url: string; mime: string; size: number; width?: number | null; height?: number | null; name: string };
-export type CommunityMessage = { id: string; channelId: string; author: string; authorId: string; color: string; avatarUrl?: string | null; content: string; time: string; createdAt: string; replyToId?: string | null; attachment?: MessageAttachment; linkPreview?: LinkPreview };
+export type MessagePoll = { question: string; options: string[] };
+export type CommunityMessage = { id: string; channelId: string; author: string; authorId: string; color: string; avatarUrl?: string | null; content: string; time: string; createdAt: string; replyToId?: string | null; attachment?: MessageAttachment; linkPreview?: LinkPreview; poll?: MessagePoll; stickerId?: string | null; messageKind: "text" | "poll" | "sticker" | "system" };
 export type CommunitySpace = Community;
 export type CommunityChannel = Channel;
 export type VoicePeer = { id: string; name: string; muted: boolean; speaking: boolean; stream?: MediaStream; screenStream?: MediaStream; screenSharing?: boolean; screenHeight?: number; screenFrameRate?: number };
@@ -22,5 +23,8 @@ export function messageFromRow(row: MessageRow, profile: Pick<Profile, "display_
   const linkPreview = row.link_preview_url && row.link_preview_title && row.link_preview_site_name
     ? { url: row.link_preview_url, title: row.link_preview_title, description: row.link_preview_description, siteName: row.link_preview_site_name }
     : undefined;
-  return { id: row.id, channelId: row.channel_id, author: profile.display_name, authorId: row.author_id, color: profile.accent_color, avatarUrl: profile.avatar_url, content: row.content, time: new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(row.created_at)), createdAt: row.created_at, replyToId: row.reply_to_id, attachment, linkPreview };
+  const poll = row.message_kind === "poll" && row.poll_question && Array.isArray(row.poll_options)
+    ? { question: row.poll_question, options: row.poll_options }
+    : undefined;
+  return { id: row.id, channelId: row.channel_id, author: profile.display_name, authorId: row.author_id, color: profile.accent_color, avatarUrl: profile.avatar_url, content: row.content, time: new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(row.created_at)), createdAt: row.created_at, replyToId: row.reply_to_id, attachment, linkPreview, poll, stickerId: row.message_kind === "sticker" ? row.sticker_id : null, messageKind: row.message_kind };
 }

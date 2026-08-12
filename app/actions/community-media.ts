@@ -26,8 +26,8 @@ export async function saveCommunityMediaAction(input: unknown): Promise<Communit
 
   const { data: community } = await supabase.from("communities")
     .select("id, avatar_file_id, banner_file_id")
-    .eq("id", parsed.data.communityId).eq("owner_id", userId).maybeSingle();
-  if (!community) return { error: "Somente o criador pode alterar as imagens da comunidade." };
+    .eq("id", parsed.data.communityId).maybeSingle();
+  if (!community) return { error: "Comunidade não encontrada." };
 
   const expectedFolder = `/fynex/communities/${community.id}/`;
   if (!parsed.data.filePath.startsWith(expectedFolder) || !isExpectedImageKitUrl(parsed.data.url, parsed.data.filePath)) {
@@ -50,8 +50,8 @@ export async function saveCommunityMediaAction(input: unknown): Promise<Communit
   const update = parsed.data.kind === "avatar"
     ? { avatar_url: parsed.data.url, avatar_file_id: parsed.data.fileId }
     : { banner_url: parsed.data.url, banner_file_id: parsed.data.fileId };
-  const { error } = await supabase.from("communities").update(update).eq("id", community.id).eq("owner_id", userId);
-  if (error) {
+  const { data: updated, error } = await supabase.from("communities").update(update).eq("id", community.id).select("id").maybeSingle();
+  if (error || !updated) {
     await deleteImageKitFile(parsed.data.fileId);
     return { error: "Não foi possível salvar a imagem da comunidade." };
   }
@@ -67,12 +67,12 @@ export async function removeCommunityMediaAction(communityId: string, kind: Comm
   const { data } = await supabase.auth.getClaims();
   const userId = data?.claims?.sub;
   if (!userId) return { error: "Sua sessão expirou. Entre novamente." };
-  const { data: community } = await supabase.from("communities").select("avatar_file_id, banner_file_id").eq("id", id.data).eq("owner_id", userId).maybeSingle();
-  if (!community) return { error: "Somente o criador pode alterar esta comunidade." };
+  const { data: community } = await supabase.from("communities").select("avatar_file_id, banner_file_id").eq("id", id.data).maybeSingle();
+  if (!community) return { error: "Comunidade não encontrada." };
   const fileId = kind === "avatar" ? community.avatar_file_id : community.banner_file_id;
   const update = kind === "avatar" ? { avatar_url: null, avatar_file_id: null } : { banner_url: null, banner_file_id: null };
-  const { error } = await supabase.from("communities").update(update).eq("id", id.data).eq("owner_id", userId);
-  if (error) return { error: "Não foi possível remover a imagem." };
+  const { data: updated, error } = await supabase.from("communities").update(update).eq("id", id.data).select("id").maybeSingle();
+  if (error || !updated) return { error: "Você não tem permissão para remover a imagem." };
   await deleteImageKitFile(fileId);
   revalidatePath("/");
   return { success: "Imagem removida." };

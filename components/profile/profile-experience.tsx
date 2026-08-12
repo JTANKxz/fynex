@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
-import { CalendarDays, Edit3, X } from "lucide-react";
+import { Bell, CalendarDays, Edit3, Moon, Palette, Settings2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ProfileForm } from "@/components/profile/profile-form";
 import { ProfileMediaEditor } from "@/components/profile/profile-media-editor";
@@ -14,20 +14,30 @@ import type { Profile } from "@/lib/supabase/database.types";
 export function ProfileExperience({ profile }: { profile: Profile }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [messageSounds, setMessageSounds] = useState(() => typeof window === "undefined" ? true : window.localStorage.getItem("fynex:message-sounds") !== "off");
   const initials = profile.display_name.slice(0, 2).toUpperCase();
   const style = { "--profile-accent": profile.accent_color } as CSSProperties;
   const song = songFromProfile(profile);
 
   useEffect(() => {
-    if (!editing) return;
-    const close = (event: KeyboardEvent) => event.key === "Escape" && setEditing(false);
+    if (!editing && !preferencesOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setEditing(false);
+      setPreferencesOpen(false);
+    };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [editing]);
+  }, [editing, preferencesOpen]);
 
   const saved = () => {
     setEditing(false);
     router.refresh();
+  };
+  const updateMessageSounds = (enabled: boolean) => {
+    setMessageSounds(enabled);
+    window.localStorage.setItem("fynex:message-sounds", enabled ? "on" : "off");
   };
 
   return <>
@@ -40,9 +50,10 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
         <button className="profile-edit-button" onClick={() => setEditing(true)}><Edit3 size={16} />Editar perfil</button>
       </div>
       <div className="profile-content-grid">
-        <article className="profile-about"><span>SOBRE MIM</span><p>{profile.bio || "Este espaço está esperando uma descrição que tenha a sua cara."}</p>{song && <ProfileSongCard song={song} />}</article>
+        <article className="profile-about"><span>SOBRE MIM</span><p>{profile.bio || "Este espaço está esperando uma descrição que tenha a sua cara."}</p>{song && <ProfileSongCard key={song.id} song={song} />}</article>
         <aside className="profile-details">
           <div><CalendarDays size={17} /><span><small>MEMBRO DESDE</small>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(profile.created_at))}</span></div>
+          <button type="button" className="profile-settings-button" onClick={() => setPreferencesOpen(true)}><Settings2 size={16} /><span><small>SEU ESPAÇO</small>Configurações</span></button>
         </aside>
       </div>
     </section>
@@ -53,6 +64,13 @@ export function ProfileExperience({ profile }: { profile: Profile }) {
         <ProfileMediaEditor profile={profile} onChanged={() => router.refresh()} />
         <ProfileForm profile={profile} onSaved={saved} onCancel={() => setEditing(false)} />
         <AccountDangerZone />
+      </section>
+    </div>}
+
+    {preferencesOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setPreferencesOpen(false)}>
+      <section className="profile-preferences-modal" role="dialog" aria-modal="true" aria-labelledby="profile-preferences-title">
+        <header><div><span className="auth-eyebrow">SEU ESPAÇO</span><h2 id="profile-preferences-title">Configurações</h2><p>Preferências do FYNEX salvas somente neste navegador.</p></div><button type="button" onClick={() => setPreferencesOpen(false)} aria-label="Fechar"><X size={19} /></button></header>
+        <section className="profile-preferences"><header><div><span>NOTIFICAÇÕES</span><h3>Preferências do aplicativo</h3><p>Escolha quando o FYNEX deve emitir sons para você.</p></div></header><label className="profile-preference-switch"><Bell size={18}/><span><strong>Som de mensagens <em>{messageSounds ? "TODAS" : "SÓ MENÇÕES E RESPOSTAS"}</em></strong><small>{messageSounds ? "Toque ao receber qualquer mensagem." : "Toque apenas em menções, @todos e respostas às suas mensagens."}</small></span><button type="button" role="switch" aria-checked={messageSounds} className={messageSounds ? "on" : ""} onClick={() => updateMessageSounds(!messageSounds)}><i/></button></label><div className="profile-preference-future"><Palette size={17}/><span><strong>Aparência</strong><small><Moon size={12}/> Tema escuro AMOLED ativo. Tema claro e opções visuais entrarão aqui.</small></span></div></section>
       </section>
     </div>}
   </>;

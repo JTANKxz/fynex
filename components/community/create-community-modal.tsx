@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { Plus, Sparkles, X } from "lucide-react";
 import { createCommunityAction } from "@/app/actions/community";
+import { FynexColorPicker } from "@/components/ui/fynex-color-picker";
 
 export function CreateCommunityModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (communityId: string) => void }) {
   const [state, action, pending] = useActionState(createCommunityAction, {});
@@ -30,7 +31,7 @@ export function CreateCommunityModal({ open, onClose, onCreated }: { open: boole
       <form action={action} className="community-form">
         <label>Nome da comunidade<input name="name" minLength={2} maxLength={50} placeholder="Ex.: Estúdio Aurora" required autoFocus /></label>
         <label>Descrição<textarea name="description" maxLength={190} placeholder="Sobre o que vocês conversam?" /></label>
-        <label>Cor do espaço<div className="color-field"><input name="accentColor" type="color" value={color} onChange={(event) => setColor(event.target.value)} aria-label="Escolher cor da comunidade" /></div></label>
+        <label>Cor do espaço<FynexColorPicker name="accentColor" value={color} onChange={setColor} /></label>
         {state.error && <p className="form-message error">{state.error}</p>}
         <button className="auth-submit" disabled={pending}><Plus size={17} />{pending ? "Criando…" : "Criar comunidade"}</button>
       </form>

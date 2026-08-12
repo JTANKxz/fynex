@@ -178,6 +178,9 @@
   color: #ececf2;
   background: transparent;
   font-size: 10px;
+  resize: none;
+  font-family: inherit;
+  padding: 14px 0;
 }
 
 .toolButton {
@@ -213,3 +216,4 @@
   .inputBar { padding: 0 8px; }
   .toolButton:first-of-type { display: none; }
 }
+.emojiRoot{position:relative}.emojiPicker{position:absolute;z-index:30;right:0;bottom:46px}
