@@ -1238,7 +1238,7 @@ export default function Home() {
   }, [hasMoreMessages, loadOlderMessages, loadingOlderMessages]);
 
   useEffect(() => {
-    if (!activeChannel) return;
+    if (!user || !activeChannel) return;
     let disposed = false;
     activeChannelRef.current = activeChannel;
     const resetTimer = window.setTimeout(() => setHasMoreMessages(true), 0);
