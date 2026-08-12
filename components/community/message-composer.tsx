@@ -95,6 +95,14 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
     textInput.current?.focus();
   }, [focusRequestKey]);
 
+  useEffect(() => {
+    const textarea = textInput.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 24), 150);
+    textarea.style.height = `${nextHeight}px`;
+  }, [draft]);
+
   return <><form className={styles.composer} onSubmit={onSubmit}>
     {attachment ? <div className={styles.selectedFile}>
       <div className={styles.preview}>

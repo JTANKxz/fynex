@@ -1908,6 +1908,13 @@ export default function Home() {
     : { height: watchedScreenPeer?.screenHeight ?? remoteScreenPeer?.screenHeight ?? 720, frameRate: Math.round(watchedScreenPeer?.screenFrameRate ?? remoteScreenPeer?.screenFrameRate ?? 30) };
   const screenQualityLabel = `${screenQuality?.height ?? 720}P · ${screenQuality?.frameRate ?? 30} FPS`;
 
+  const activeTransmissions = [
+    ...(screenSharing && localScreenPreview ? [{ id: user?.id ?? "local", name: `${user?.name ?? "Você"} (Você)`, stream: localScreenPreview, isLocal: true }] : []),
+    ...Object.entries(voicePeers)
+      .filter(([, peer]) => peer.screenSharing && peer.screenStream)
+      .map(([id, peer]) => ({ id, name: peer.name, stream: peer.screenStream!, isLocal: false }))
+  ];
+
   const moderateVoiceParticipant = async (memberId: string, channelId: string, operation: "mute" | "disconnect") => {
     if (!activeCommunity || !canModerateVoiceMember(memberId)) return;
     const result = await moderateVoiceMemberAction({ communityId: activeCommunity.id, channelId, userId: memberId, operation });
@@ -1991,27 +1998,45 @@ export default function Home() {
   };
 
   const jumpToMessage = async (messageId: string) => {
-    let target = messages.find((message) => message.id === messageId) ?? replySnapshots[messageId];
+    const target = messages.find((message) => message.id === messageId);
     if (!target) {
-      const { data: row } = await supabase.from("messages").select("*").eq("id", messageId).maybeSingle();
-      if (row) {
-        const { data: author } = await supabase.from("profiles").select("display_name, accent_color, avatar_url").eq("id", row.author_id).maybeSingle();
-        if (author) target = messageFromRow(row, author);
+      const { data: targetRow } = await supabase.from("messages").select("*").eq("id", messageId).maybeSingle();
+      if (!targetRow || targetRow.channel_id !== activeChannel) {
+        setRealtimeError("A mensagem original não está mais disponível neste canal.");
+        return;
+      }
+
+      const [olderRes, newerRes] = await Promise.all([
+        supabase.from("messages").select("*").eq("channel_id", activeChannel).lte("created_at", targetRow.created_at).order("created_at", { ascending: false }).limit(30),
+        supabase.from("messages").select("*").eq("channel_id", activeChannel).gt("created_at", targetRow.created_at).order("created_at", { ascending: true }).limit(20),
+      ]);
+
+      const combinedRows = [...(olderRes.data ?? []), ...(newerRes.data ?? [])];
+      if (combinedRows.length > 0) {
+        const authorIds = Array.from(new Set(combinedRows.map((r) => r.author_id)));
+        const { data: profiles } = await supabase.from("profiles").select("id, display_name, accent_color, avatar_url").in("id", authorIds);
+        const profileMap = new Map(profiles?.map((p) => [p.id, p]));
+
+        const loadedMessages: Message[] = combinedRows.map((r) => {
+          const author = profileMap.get(r.author_id) ?? { display_name: "Usuário", accent_color: "#8b5cf6", avatar_url: null };
+          return messageFromRow(r, author);
+        });
+
+        setMessages((current) => {
+          const map = new Map<string, Message>();
+          current.forEach((m) => map.set(m.id, m));
+          loadedMessages.forEach((m) => map.set(m.id, m));
+          return Array.from(map.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        });
       }
     }
-    if (!target || target.channelId !== activeChannel) {
-      setRealtimeError("A mensagem original não está mais disponível neste canal.");
-      return;
-    }
-    if (!messages.some((message) => message.id === target?.id)) {
-      setMessages((current) => [...current, target!].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-151));
-    }
+
     if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
     window.setTimeout(() => {
       document.getElementById(`message-${messageId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
       setHighlightedMessageId(messageId);
-      highlightTimer.current = window.setTimeout(() => setHighlightedMessageId(null), 1800);
-    }, 40);
+      highlightTimer.current = window.setTimeout(() => setHighlightedMessageId(null), 2000);
+    }, 80);
   };
 
   const deleteSelectedMessage = async (message: Message) => {
@@ -2208,7 +2233,7 @@ export default function Home() {
         </div>
       </aside>
 
-      <section className="chat-panel" style={communityChatStyle}>
+      <section className={`chat-panel ${voicePanelChannelId ? "call-open" : ""}`} style={communityChatStyle}>
         <header className="chat-header">
           <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Abrir canais"><Menu size={18} /></button>
           <span className="hash"><Hash size={16} /></span><strong>{activeCommunity.name}</strong><i />
@@ -2218,20 +2243,75 @@ export default function Home() {
 
         {voicePanelChannelId && <section className="voice-room-stage">
           <header><div><span>CANAL DE VOZ</span><strong>{voiceChannel === voicePanelChannelId ? voiceName : voiceChannels.find((channel) => channel.id === voicePanelChannelId)?.name ?? "Sala de voz"}</strong><small>{getVoiceMembers(voicePanelChannelId).length} participante(s)</small></div><button onClick={() => { setVoicePanelChannelId(null); setPinnedVoiceUserId(null); }} aria-label="Fechar visualização da chamada"><X size={18} /></button></header>
-          <div className="voice-room-grid">{getVoiceMembers(voicePanelChannelId).map((member) => { const peer = voicePeers[member.id]; const isCurrentUser = member.id === user.id; const locallyMuted = locallyMutedUsers.has(member.id); return <button key={member.id} className={`voice-room-card ${(isCurrentUser ? speaking : peer?.speaking) ? "speaking" : ""} ${pinnedVoiceUserId === member.id ? "pinned" : ""}`} onContextMenu={(event) => { if (!canModerateVoiceMember(member.id)) return; event.preventDefault(); openVoiceModerationMenu(member, voicePanelChannelId, event.clientX, event.clientY); }} onClick={() => { setPinnedVoiceUserId((current) => current === member.id ? null : member.id); if (!isCurrentUser) openMemberProfile(member.id); }}><Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} /><strong>{member.name}{isCurrentUser ? " (você)" : ""}</strong><small>{locallyMuted ? "Silenciado para você" : peer?.stream || isCurrentUser ? "Na chamada" : "Conectando"}</small>{pinnedVoiceUserId === member.id && <i>DESTAQUE</i>}</button>; })}</div>
+          
+          <div className="voice-room-content">
+            {activeTransmissions.length > 0 && (
+              <div className="voice-room-streams-section">
+                <header className="voice-streams-header">
+                  <MonitorUp size={15} />
+                  <span>TRANSMISSÕES AO VIVO ({activeTransmissions.length})</span>
+                </header>
+                <div className="voice-streams-grid">
+                  {activeTransmissions.map((t) => (
+                    <div key={t.id} className={`voice-stream-card ${watchingScreenId === t.id || (t.isLocal && screenSharing && streamViewerOpen) ? "active" : ""}`}>
+                      <div className="voice-stream-preview">
+                        <ScreenVideo stream={t.stream} />
+                        <div className="voice-stream-badge"><span className="live-dot" /> TRANSMISSÃO</div>
+                      </div>
+                      <div className="voice-stream-info">
+                        <strong>{t.name}</strong>
+                        <button onClick={() => {
+                          if (t.isLocal) {
+                            setStreamViewerOpen(true);
+                          } else {
+                            watchScreen(t.id);
+                            setStreamViewerOpen(true);
+                          }
+                        }}>
+                          <Eye size={13} /> {watchingScreenId === t.id || (t.isLocal && streamViewerOpen) ? "Em tela cheia" : "Assistir"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="voice-room-grid">
+              {getVoiceMembers(voicePanelChannelId).map((member) => {
+                const peer = voicePeers[member.id];
+                const isCurrentUser = member.id === user?.id;
+                const locallyMuted = locallyMutedUsers.has(member.id);
+                const isMemberStreaming = isCurrentUser ? screenSharing : peer?.screenSharing;
+                return <button key={member.id} className={`voice-room-card ${(isCurrentUser ? speaking : peer?.speaking) ? "speaking" : ""} ${pinnedVoiceUserId === member.id ? "pinned" : ""}`} onContextMenu={(event) => { if (!canModerateVoiceMember(member.id)) return; event.preventDefault(); openVoiceModerationMenu(member, voicePanelChannelId, event.clientX, event.clientY); }} onClick={() => { setPinnedVoiceUserId((current) => current === member.id ? null : member.id); if (!isCurrentUser) openMemberProfile(member.id); }}>
+                  <Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} />
+                  <strong>{member.name}{isCurrentUser ? " (você)" : ""}</strong>
+                  <small>{locallyMuted ? "Silenciado para você" : peer?.stream || isCurrentUser ? "Na chamada" : "Conectando"}</small>
+                  {isMemberStreaming && <span className="voice-card-live-tag"><MonitorUp size={11} /> TRANSMITINDO</span>}
+                  {pinnedVoiceUserId === member.id && <i>DESTAQUE</i>}
+                </button>;
+              })}
+            </div>
+          </div>
+
           <footer><button className={muted ? "active" : ""} onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />}<span>{muted ? "Ativar microfone" : "Silenciar"}</span></button><button className={deafened ? "active" : ""} onClick={() => setDeafened(!deafened)}>{deafened ? <VolumeX size={17} /> : <Volume2 size={17} />}<span>{deafened ? "Ouvir novamente" : "Ensurdecer"}</span></button><button className={screenSharing ? "active screen" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()}>{screenSharing ? <Square size={16} /> : <MonitorUp size={17} />}<span>{screenSharing ? "Parar transmissão" : "Transmitir tela"}</span></button><button className="leave" onClick={leaveVoice}><PhoneOff size={17} /><span>Sair da chamada</span></button></footer>
         </section>}
 
-        {(screenSharing || remoteScreenPeer) && !streamViewerOpen && <section className="screen-invite">
+        {activeTransmissions.length > 0 && !streamViewerOpen && !voicePanelChannelId && <section className="screen-invite">
           <div className="screen-invite-preview"><MonitorUp size={25} /></div>
-          <div><span>TRANSMISSÃO AO VIVO</span><strong>{screenSharing ? "Sua tela está sendo transmitida" : `${remoteScreenPeer?.name} está compartilhando a tela`}</strong><small>{screenQualityLabel} · conexão ativada somente para espectadores</small></div>
-          <button onClick={() => {
-            if (screenSharing || watchingScreenId === remoteScreenPeer?.id) {
-              setStreamViewerOpen(true);
-            } else if (remoteScreenPeer) {
-              watchScreen(remoteScreenPeer.id);
-            }
-          }}><Eye size={15} /> {watchingScreenId || screenSharing ? "Abrir transmissão" : "Assistir transmissão"}</button>
+          <div><span>TRANSMISSÃO AO VIVO</span><strong>{activeTransmissions.length === 1 ? `${activeTransmissions[0].name} está transmitindo` : `${activeTransmissions.length} transmissões ao vivo`}</strong><small>{screenQualityLabel} · clique para assistir</small></div>
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {activeTransmissions.map((t) => (
+              <button key={t.id} onClick={() => {
+                if (t.isLocal) {
+                  setStreamViewerOpen(true);
+                } else {
+                  watchScreen(t.id);
+                  setStreamViewerOpen(true);
+                }
+              }}><Eye size={14} /> {t.name}</button>
+            ))}
+          </div>
         </section>}
 
         {streamViewerOpen && (screenSharing || watchingScreenId) && <section className="screen-stage" ref={screenStage}>
