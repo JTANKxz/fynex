@@ -77,6 +77,7 @@ export default function Home() {
   const [communityStickers, setCommunityStickers] = useState<CommunitySticker[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<MemberProfile | null>(null);
   const [homeOpen, setHomeOpen] = useState(true);
+  const [homeRailExpanded, setHomeRailExpanded] = useState(false);
   const [selectedProfileContext, setSelectedProfileContext] = useState<"community" | "external">("community");
   const selectedProfileContextRef = useRef<"community" | "external">("community");
   const [directMessagesOpen, setDirectMessagesOpen] = useState(false);
@@ -135,7 +136,7 @@ export default function Home() {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [chatConnectionState, setChatConnectionState] = useState<ConnectionState>("connecting");
   const [voiceConnectionState, setVoiceConnectionState] = useState<ConnectionState>("idle");
-  const [mentionNotice, setMentionNotice] = useState<{ author: string; channelId: string; channelName: string } | null>(null);
+  const [mentionNotice, setMentionNotice] = useState<{ author: string; channelId: string; channelName: string; communityId: string } | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [incomingFriendRequests, setIncomingFriendRequests] = useState<IncomingFriendRequest[]>([]);
@@ -443,6 +444,13 @@ export default function Home() {
   useEffect(() => { userRef.current = user; }, [user]);
   useEffect(() => { homeOpenRef.current = homeOpen; }, [homeOpen]);
   useEffect(() => {
+    if (!notificationsOpen) return;
+    setMentionNotice(null);
+    setNotifications((current) => current.map((notification) => notification.read ? notification : { ...notification, read: true }));
+    const timer = window.setTimeout(() => setNotificationsOpen(false), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [notificationsOpen]);
+  useEffect(() => {
     if (!user) return;
     const channel = supabase.channel("fynex:presence:v1", { config: { presence: { key: user.id } } });
     channel.on("presence", { event: "sync" }, () => {
@@ -462,6 +470,48 @@ export default function Home() {
     document.addEventListener("fullscreenchange", syncFullscreenState);
     return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
   }, []);
+  useEffect(() => {
+    if (!authenticatedUserId || !communities.length) return;
+    const backgroundCommunities = communities.filter((community) => community.id !== activeCommunityId);
+    if (!backgroundCommunities.length) return;
+    const channels = backgroundCommunities.map((community) => {
+      const channel = supabase.channel(`fynex:mention-watch:${authenticatedUserId}:${community.id}`, {
+        config: { broadcast: { self: false, ack: false } },
+      });
+      channel
+        .on("broadcast", { event: "mention-everyone" }, ({ payload }) => {
+          const mention = payload as { authorId?: string; author?: string; channelId?: string; channelName?: string; communityId?: string; communityName?: string };
+          if (!mention.channelId || mention.authorId === authenticatedUserId) return;
+          const channelId: string = mention.channelId;
+          const sourceCommunityId = mention.communityId ?? community.id;
+          if (sourceCommunityId === activeCommunityIdRef.current) return;
+          setMentionNotice({
+            author: mention.author ?? "Um administrador",
+            channelId,
+            channelName: mention.channelName ?? "canal",
+            communityId: sourceCommunityId,
+          });
+          setNotifications((current) => [{
+            id: crypto.randomUUID(),
+            author: mention.author ?? "Um administrador",
+            text: "mencionou @todos",
+            communityId: sourceCommunityId,
+            channelId,
+            channelName: mention.channelName ?? "canal",
+            createdAt: new Date().toISOString(),
+            read: false,
+          }, ...current].slice(0, 50));
+          playSound(receivedMessageSound.current);
+        })
+        .subscribe();
+      return channel;
+    });
+    return () => {
+      channels.forEach((channel) => {
+        void supabase.removeChannel(channel);
+      });
+    };
+  }, [activeCommunityId, authenticatedUserId, communities, playSound, supabase]);
   useEffect(() => {
     const container = messagesContainer.current;
     if (!container) return;
@@ -975,14 +1025,16 @@ export default function Home() {
         setReplyTarget((current) => current?.id === deleted.id ? null : current);
       })
       .on("broadcast", { event: "mention-everyone" }, ({ payload }) => {
-        const mention = payload as { authorId?: string; author?: string; channelId?: string; channelName?: string };
+        const mention = payload as { authorId?: string; author?: string; channelId?: string; channelName?: string; communityId?: string; communityName?: string };
         if (!mention.channelId || mention.authorId === realtimeUser.id) return;
-        setMentionNotice({ author: mention.author ?? "Um administrador", channelId: mention.channelId, channelName: mention.channelName ?? "canal" });
+        const sourceCommunityId = mention.communityId ?? activeCommunityId;
+        if (sourceCommunityId === activeCommunityIdRef.current) return;
+        setMentionNotice({ author: mention.author ?? "Um administrador", channelId: mention.channelId, channelName: mention.channelName ?? "canal", communityId: sourceCommunityId });
         setNotifications((current) => [{
           id: crypto.randomUUID(),
           author: mention.author ?? "Um administrador",
           text: "mencionou @todos",
-          communityId: activeCommunityId,
+          communityId: sourceCommunityId,
           channelId: mention.channelId!,
           channelName: mention.channelName ?? "canal",
           createdAt: new Date().toISOString(),
@@ -1141,7 +1193,8 @@ export default function Home() {
       if (!wasSentInThisTab && row.author_id !== user.id && row.message_kind !== "system" && (messageSoundEnabledRef.current || isDirectMention || repliedToYou)) {
         playSound(receivedMessageSound.current);
       }
-      if (isDirectMention || repliedToYou) {
+      const isCurrentContext = row.channel_id === activeChannelRef.current && (activeCommunityId ?? "") === (activeCommunityIdRef.current ?? "");
+      if ((isDirectMention || repliedToYou) && !isCurrentContext) {
         const channelName = communityChannels.find((channel) => channel.id === row.channel_id)?.name ?? "canal";
         setNotifications((current) => [{
           id: row.id,
@@ -1661,7 +1714,7 @@ export default function Home() {
       const sent = messageFromRow(result.data, { display_name: user.name, accent_color: user.color, avatar_url: user.avatarUrl ?? null });
       setMessages((old) => old.some((item) => item.id === sent.id) ? old : [...old, sent].slice(-150));
       if (/(^|\s)@todos([^a-zA-Z0-9_]|$)/i.test(content)) {
-        await realtime.current?.send({ type: "broadcast", event: "mention-everyone", payload: { authorId: user.id, author: user.name, channelId: activeChannel, channelName: currentChannel.name } });
+        await realtime.current?.send({ type: "broadcast", event: "mention-everyone", payload: { authorId: user.id, author: user.name, communityId: activeCommunityId, communityName: activeCommunity?.name, channelId: activeChannel, channelName: currentChannel.name } });
       }
       playSound(sentMessageSound.current);
       await realtime.current?.send({ type: "broadcast", event: "typing", payload: { userId: user.id, name: user.name, channelId: activeChannel, active: false } });
@@ -1951,16 +2004,34 @@ export default function Home() {
 
   if (!user) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Entre para continuar."}</p></main>;
 
-  if (homeOpen) return <main className="app-shell home-app-shell">
-    <aside className="server-rail" aria-label="Barra principal">
-      <button className="server brand-server active" onClick={openHome} aria-label="Início"><span className="brand-mark rail-brand-mark">F</span></button>
+  if (homeOpen) return <main className={`app-shell home-app-shell ${homeRailExpanded ? "home-rail-expanded" : ""}`}>
+    <aside className="server-rail" aria-label="Barra principal" aria-expanded={homeRailExpanded}>
+      <button className="server brand-server active" onClick={openHome} aria-label="Início"><span className="brand-mark rail-brand-mark">F</span><span className="rail-item-label">Início</span></button>
+      <button
+        className="top-connections rail-expand-toggle"
+        onClick={() => setHomeRailExpanded((current) => !current)}
+        aria-label={homeRailExpanded ? "Recolher menu" : "Expandir menu"}
+        title={homeRailExpanded ? "Recolher menu" : "Expandir menu"}
+      >
+        {homeRailExpanded ? <PanelLeftClose size={14} /> : <PanelRightOpen size={14} />}
+      </button>
       <div className="rail-divider" />
-      <nav className="rail-community-list" aria-label="Suas comunidades">{communities.map((community) => <button key={community.id} className={`rail-community ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)} aria-label={`Abrir ${community.name}`} title={community.name}><span style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span>{(unreadCommunityCounts[community.id] ?? 0) > 0 && <b className="rail-unread-count">{unreadCommunityCounts[community.id] > 99 ? "99+" : unreadCommunityCounts[community.id]}</b>}</button>)}<button className="rail-community rail-community-add" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade"><Plus size={18} /></button></nav>
-      <div className="rail-spacer" />
-      <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}</button>
-      <button className="top-connections" onClick={() => { setDirectMessageTarget(null); setDirectMessagesOpen(true); }} aria-label="Mensagens privadas" title="Mensagens privadas"><MessageCircle size={16} /></button>
-      <button className="top-connections" onClick={() => activeCommunity && setConnectionsTab("friends")} aria-label="Amigos e convites"><UserPlus size={16} /></button>
-      <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} small /></Link>
+      <nav className="rail-community-list" aria-label="Suas comunidades">
+        {communities.map((community) => (
+          <button key={community.id} className={`rail-community ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)} aria-label={`Abrir ${community.name}`} title={community.name}>
+            <span style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span>
+            <strong className="rail-community-name">{community.name}</strong>
+            {(unreadCommunityCounts[community.id] ?? 0) > 0 && <b className="rail-unread-count">{unreadCommunityCounts[community.id] > 99 ? "99+" : unreadCommunityCounts[community.id]}</b>}
+          </button>
+        ))}
+        <button className="rail-community rail-community-add" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade" title="Criar comunidade"><Plus size={18} /><strong className="rail-community-name">Criar comunidade</strong></button>
+      </nav>
+      <div className="rail-bottom-actions">
+        <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações" title="Abrir notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}<span className="rail-item-label">Notificações</span></button>
+        <button className="top-connections" onClick={() => { setDirectMessageTarget(null); setDirectMessagesOpen(true); }} aria-label="Mensagens privadas" title="Mensagens privadas"><MessageCircle size={16} /><span className="rail-item-label">Mensagens</span></button>
+        <button className="top-connections" onClick={() => activeCommunity && setConnectionsTab("friends")} aria-label="Amigos e convites" title="Amigos e convites"><UserPlus size={16} /><span className="rail-item-label">Amigos</span></button>
+        <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil" title="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} small /><span className="rail-item-label">Perfil</span></Link>
+      </div>
     </aside>
     <HomeDashboard currentUserId={user.id} profile={{ name: user.name, color: user.color, avatarUrl: user.avatarUrl ?? null }} onlineUserIds={globalOnlineUserIds} communities={communities} unreadCounts={unreadCommunityCounts} onOpenCommunity={(communityId) => void selectCommunity(communityId)} onOpenFriends={() => activeCommunity && setConnectionsTab("friends")} onOpenMessages={() => { setDirectMessageTarget(null); setDirectMessagesOpen(true); }} onOpenNotifications={() => setNotificationsOpen(true)} onOpenProfile={openExternalProfile} onOpenProfilePage={() => router.push("/profile")} onCreateCommunity={() => setCreateCommunityOpen(true)} />
     {notificationsOpen && <aside className="notifications-popover" aria-label="Notificações"><header><strong>Notificações</strong><button onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações"><X size={15}/></button></header>{incomingFriendRequests.map((request) => <article key={`${request.userA}-${request.userB}`}><button className="friend-notification-person" onClick={() => openExternalProfile(request.person)}><Avatar name={request.person.display_name} color={request.person.accent_color} imageUrl={request.person.avatar_url} small status={false}/><span><strong>{request.person.display_name}</strong><small>Pedido de amizade</small></span></button><div><button onClick={() => void respondToFriendRequest(request, "accepted")}><Check size={13}/>Aceitar</button><button onClick={() => void respondToFriendRequest(request, "declined")}><X size={13}/>Recusar</button></div></article>)}{notifications.map((notification) => <button key={notification.id} className={notification.read ? "read" : ""} onClick={() => void openNotification(notification)}><Bell size={14}/><span><strong>{notification.author}</strong><small>{notification.text} em #{notification.channelName}</small></span></button>)}{!incomingFriendRequests.length && !notifications.length && <p>Nenhuma notificação por enquanto.</p>}</aside>}
@@ -2007,8 +2078,8 @@ export default function Home() {
       {notificationsOpen && <aside className="notifications-popover" aria-label="Notificações"><header><strong>Notificações</strong><button onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações"><X size={15} /></button></header>{incomingFriendRequests.length > 0 && <section className="friend-notifications"><h3>PEDIDOS DE AMIZADE</h3>{incomingFriendRequests.map((request) => <article key={`${request.userA}-${request.userB}`}><button className="friend-notification-person" onClick={() => openExternalProfile(request.person)}><Avatar name={request.person.display_name} color={request.person.accent_color} imageUrl={request.person.avatar_url} small status={false} /><span><strong>{request.person.display_name}</strong><small>@{request.person.username}</small></span></button><div><button onClick={() => void respondToFriendRequest(request, "accepted")}><Check size={13} />Aceitar</button><button onClick={() => void respondToFriendRequest(request, "declined")}><X size={13} />Recusar</button></div></article>)}</section>}{incomingPairRequests.length > 0 && <section className="friend-notifications"><h3>PEDIDOS DE PAR</h3>{incomingPairRequests.map((request) => <article key={request.id}><button className="friend-notification-person" onClick={() => { setSelectedProfileContext("community"); setSelectedProfile(request.person); }}><Avatar name={request.person.display_name} color={request.person.accent_color} imageUrl={request.person.avatar_url} small status={false} /><span><strong>{request.person.display_name}</strong><small>quer ser seu par nesta comunidade</small></span></button><div><button onClick={() => void respondToPairRequest(request, "accepted")}><Check size={13} />Aceitar</button><button onClick={() => void respondToPairRequest(request, "declined")}><X size={13} />Recusar</button></div></article>)}</section>}{notifications.length ? <div>{notifications.map((notification) => <button key={notification.id} className={notification.read ? "read" : ""} onClick={() => void openNotification(notification)}><Bell size={14} /><span><strong>{notification.author}</strong><small>{notification.text} em #{notification.channelName}</small></span></button>)}</div> : !incomingFriendRequests.length && !incomingPairRequests.length && <p>Nenhuma notificação por enquanto.</p>}</aside>}
 
       <button className={`mobile-backdrop ${mobileNav ? "visible" : ""}`} onClick={() => setMobileNav(false)} aria-label="Fechar menu de canais" aria-hidden={!mobileNav} tabIndex={mobileNav ? 0 : -1} />
-      {sidebarCollapsed && <button className="sidebar-reopen" onClick={() => setSidebarCollapsed(false)} aria-label="Mostrar canais"><PanelLeftOpen size={17} /></button>}
-      {membersCollapsed && <button className="members-reopen" onClick={() => setMembersCollapsed(false)} aria-label="Mostrar membros"><PanelRightOpen size={17} /></button>}
+      {sidebarCollapsed && <button className="sidebar-reopen" onClick={() => setSidebarCollapsed(false)} aria-label="Mostrar canais"><PanelLeftOpen size={14} /></button>}
+      {membersCollapsed && <button className="members-reopen" onClick={() => setMembersCollapsed(false)} aria-label="Mostrar membros"><PanelRightOpen size={14} /></button>}
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
         <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className="community-dot" style={{ backgroundColor: activeCommunity.accent_color, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isAdmin && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="sidebar-collapse" onClick={() => setSidebarCollapsed(true)} aria-label="Recolher canais" title="Recolher canais"><PanelLeftClose size={16} /></button><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
@@ -2059,8 +2130,8 @@ export default function Home() {
       <section className="chat-panel" style={communityChatStyle}>
         <header className="chat-header">
           <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Abrir canais"><Menu size={18} /></button>
-          <span className="hash"><Hash size={16} /></span><strong>{currentChannel.name}</strong><i />
-          <p>{activeCommunity.description || `Conversas em ${activeCommunity.name}`}</p>
+          <span className="hash"><Hash size={16} /></span><strong>{activeCommunity.name}</strong><i />
+          <p>#{currentChannel.name} · {activeCommunity.description || `Conversas em ${activeCommunity.name}`}</p>
           <div className="header-actions"><div className={`connection-state ${chatConnectionState}`} title={chatConnectionLabel}>{chatConnectionState === "connected" ? <Wifi size={13} /> : <WifiOff size={13} />}<span>{chatConnectionLabel}</span></div><div className="header-online"><span />{onlineMembers.length} online</div><button className="mobile-members-button" aria-label="Ver membros" onClick={() => setMembersOpen(true)}><Users size={16} /></button><button aria-label="Notificações" onClick={() => setNotificationsOpen(true)}><Bell size={16} /></button><label><Search size={14} /><input value={messageSearch} onChange={(event) => setMessageSearch(event.target.value)} placeholder="Buscar mensagens ou pessoas" />{messageSearch && <button onClick={() => setMessageSearch("")} aria-label="Limpar busca"><X size={12} /></button>}</label></div>
         </header>
 
@@ -2150,7 +2221,16 @@ export default function Home() {
       {directMessagesOpen && <DirectMessagesModal currentUserId={user.id} initialProfile={directMessageTarget} onClose={() => { setDirectMessagesOpen(false); setDirectMessageTarget(null); }} onViewProfile={openExternalProfile} />}
       {messageMenu && <MessageActionsMenu state={messageMenu} canDelete={messageMenu.message.authorId === user.id || (currentAccess.manageMessages && (currentAccess.isOwner || messageMenu.message.authorId !== activeCommunity.owner_id))} canBan={canModerateVoiceMember(messageMenu.message.authorId)} onReply={() => { setReplyTarget(messageMenu.message); setMessageMenu(null); }} onMention={() => mentionMessageAuthor(messageMenu.message)} onReaction={(emoji) => { void toggleMessageReaction(messageMenu.message, emoji); setMessageMenu(null); }} onDelete={() => void deleteSelectedMessage(messageMenu.message)} onBan={() => void banMessageAuthor(messageMenu.message)} onClose={() => setMessageMenu(null)} />}
       {voiceMemberMenu && <VoiceMemberMenu state={voiceMemberMenu} onMute={() => void moderateVoiceParticipant(voiceMemberMenu.memberId, voiceMemberMenu.channelId, "mute")} onDisconnect={() => void moderateVoiceParticipant(voiceMemberMenu.memberId, voiceMemberMenu.channelId, "disconnect")} onClose={() => setVoiceMemberMenu(null)} />}
-      {mentionNotice && <button className="mention-notice" onClick={() => { setActiveChannel(mentionNotice.channelId); setMentionNotice(null); }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}
+      {mentionNotice && <button className="mention-notice" onClick={() => {
+        if (mentionNotice.communityId !== activeCommunityId) {
+          homeOpenRef.current = false;
+          setHomeOpen(false);
+          void loadWorkspace(mentionNotice.communityId, mentionNotice.channelId);
+        } else {
+          setActiveChannel(mentionNotice.channelId);
+        }
+        setMentionNotice(null);
+      }}><Bell size={15} /><span><strong>{mentionNotice.author} mencionou @todos</strong><small>Abrir #{mentionNotice.channelName}</small></span><X size={14} /></button>}
       {moderationNotice && <button className="mention-notice moderation-notice" onClick={() => setModerationNotice("")}><MicOff size={15} /><span><strong>{moderationNotice}</strong><small>Clique para fechar</small></span><X size={14} /></button>}
       {mediaSettingsOpen && <MediaSettingsModal audioInputs={audioInputs} selectedAudioInput={selectedAudioInput} onAudioInput={(deviceId) => void changeAudioInput(deviceId)} noiseSuppression={noiseSuppression} noiseSuppressionSupported={noiseSuppressionSupported} noiseSuppressionApplied={noiseSuppressionApplied} echoCancellation={echoCancellation} echoCancellationApplied={echoCancellationApplied} onProcessing={(setting, enabled) => void updateAudioProcessing(setting, enabled)} microphoneVolume={microphoneVolume} onMicrophoneVolume={(value) => void updateMicrophoneVolume(value)} micTestActive={micTestActive} micTestLevel={micTestLevel} onToggleMicTest={() => void toggleMicTest()} screenPreset={screenPreset} onScreenPreset={setScreenPreset} onClose={closeMediaSettings} />}
       <div className="persistent-audio-rack" aria-hidden="true">
