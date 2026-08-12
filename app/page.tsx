@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, History, Loader2, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { ChannelCategory, CommunityMemberRole, CommunityMemberTag, CommunityRoleIcon, CommunityRoleWithIcon, CommunitySticker, CommunityTag, Message as MessageRow, MessageReaction, PollVote, Profile, VoiceModerationEvent } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction, toggleMessageReactionAction, votePollAction } from "@/app/actions/messages";
@@ -84,6 +84,8 @@ export default function Home() {
   const [directMessageTarget, setDirectMessageTarget] = useState<MemberProfile | null>(null);
   const [mediaSettingsOpen, setMediaSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(seedMessages);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [messageReactions, setMessageReactions] = useState<Record<string, MessageReaction[]>>({});
   const [pollVotes, setPollVotes] = useState<Record<string, PollVote[]>>({});
   const [unreadCommunityCounts, setUnreadCommunityCounts] = useState<Record<string, number>>({});
@@ -445,10 +447,12 @@ export default function Home() {
   useEffect(() => { homeOpenRef.current = homeOpen; }, [homeOpen]);
   useEffect(() => {
     if (!notificationsOpen) return;
-    setMentionNotice(null);
-    setNotifications((current) => current.map((notification) => notification.read ? notification : { ...notification, read: true }));
-    const timer = window.setTimeout(() => setNotificationsOpen(false), 30_000);
-    return () => window.clearTimeout(timer);
+    const timerId = window.setTimeout(() => {
+      setMentionNotice(null);
+      setNotifications((current) => current.map((notification) => notification.read ? notification : { ...notification, read: true }));
+    }, 0);
+    const closeTimer = window.setTimeout(() => setNotificationsOpen(false), 30_000);
+    return () => { window.clearTimeout(timerId); window.clearTimeout(closeTimer); };
   }, [notificationsOpen]);
   useEffect(() => {
     if (!user) return;
@@ -1161,10 +1165,84 @@ export default function Home() {
     };
   }, [activeCommunityId, closePeer, loadCommunityPeople, makePeer, playSound, post, renegotiatePeer, supabase]);
 
-  useEffect(() => {
-    if (!user || !activeChannel) return;
+  const loadOlderMessages = useCallback(async () => {
+    if (!activeChannel || loadingOlderMessages || !hasMoreMessages) return;
+    const channelMsgs = messagesRef.current.filter((m) => m.channelId === activeChannel);
+    const oldestMessage = channelMsgs[0];
+    if (!oldestMessage) return;
 
+    setLoadingOlderMessages(true);
+    const container = messagesContainer.current;
+    const prevScrollHeight = container?.scrollHeight ?? 0;
+    const prevScrollTop = container?.scrollTop ?? 0;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, message_kind, poll_question, poll_options, sticker_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, link_preview_url, link_preview_title, link_preview_description, link_preview_site_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
+      .eq("channel_id", activeChannel)
+      .lt("created_at", oldestMessage.createdAt)
+      .order("created_at", { ascending: false })
+      .limit(35);
+
+    setLoadingOlderMessages(false);
+    if (error || !data) return;
+
+    if (data.length < 35) setHasMoreMessages(false);
+    if (data.length === 0) return;
+
+    const olderLoaded = data.reverse().flatMap((row) => {
+      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      return profile ? [messageFromRow(row, profile)] : [];
+    });
+
+    setMessages((current) => {
+      const existingIds = new Set(current.map((m) => m.id));
+      const freshOlder = olderLoaded.filter((m) => !existingIds.has(m.id));
+      return [...freshOlder, ...current];
+    });
+
+    const msgIds = olderLoaded.map((m) => m.id);
+    if (msgIds.length) {
+      const { data: reactionsData } = await supabase.from("message_reactions").select("*").in("message_id", msgIds);
+      if (reactionsData?.length) {
+        const grouped: Record<string, MessageReaction[]> = {};
+        reactionsData.forEach((item) => { grouped[item.message_id] = [...(grouped[item.message_id] ?? []), item]; });
+        setMessageReactions((prev) => ({ ...prev, ...grouped }));
+      }
+    }
+
+    const pollMsgIds = olderLoaded.filter((m) => m.poll).map((m) => m.id);
+    if (pollMsgIds.length) {
+      const { data: votesData } = await supabase.from("poll_votes").select("*").in("message_id", pollMsgIds);
+      if (votesData?.length) {
+        const grouped: Record<string, PollVote[]> = {};
+        votesData.forEach((item) => { grouped[item.message_id] = [...(grouped[item.message_id] ?? []), item]; });
+        setPollVotes((prev) => ({ ...prev, ...grouped }));
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      if (container) {
+        const newScrollHeight = container.scrollHeight;
+        container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+      }
+    });
+  }, [activeChannel, hasMoreMessages, loadingOlderMessages, supabase]);
+
+  const handleScrollMessages = useCallback(() => {
+    const container = messagesContainer.current;
+    if (!container || loadingOlderMessages || !hasMoreMessages) return;
+    if (container.scrollTop < 50) {
+      void loadOlderMessages();
+    }
+  }, [hasMoreMessages, loadOlderMessages, loadingOlderMessages]);
+
+  useEffect(() => {
+    if (!activeChannel) return;
     let disposed = false;
+    activeChannelRef.current = activeChannel;
+    const resetTimer = window.setTimeout(() => setHasMoreMessages(true), 0);
+
     const loadReactions = async (messageIds: string[]) => {
       if (!messageIds.length) { if (!disposed) setMessageReactions({}); return; }
       const { data } = await supabase.from("message_reactions").select("*").in("message_id", messageIds);
@@ -1244,14 +1322,16 @@ export default function Home() {
       .select("id, channel_id, author_id, content, created_at, edited_at, reply_to_id, message_kind, poll_question, poll_options, sticker_id, attachment_kind, attachment_url, attachment_file_id, attachment_path, attachment_mime, attachment_size, attachment_width, attachment_height, attachment_name, link_preview_url, link_preview_title, link_preview_description, link_preview_site_name, profiles!messages_author_id_fkey(display_name, accent_color, avatar_url)")
       .eq("channel_id", activeChannel)
       .order("created_at", { ascending: false })
-      .limit(150)
+      .limit(35)
       .then(async ({ data, error }) => {
         if (disposed) return;
         if (error) {
           setRealtimeError("Não foi possível carregar as mensagens.");
           return;
         }
-        const loaded = (data ?? []).reverse().flatMap((row) => {
+        const rows = data ?? [];
+        setHasMoreMessages(rows.length >= 35);
+        const loaded = rows.reverse().flatMap((row) => {
           const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
           return profile ? [messageFromRow(row, profile)] : [];
         });
@@ -1276,6 +1356,7 @@ export default function Home() {
 
     return () => {
       disposed = true;
+      window.clearTimeout(resetTimer);
       void supabase.removeChannel(messageChannel);
       void supabase.removeChannel(reactionChannel);
       void supabase.removeChannel(pollVoteChannel);
@@ -2173,8 +2254,22 @@ export default function Home() {
           </footer>
         </section>}
 
-        <div className="messages" ref={messagesContainer}>
-          <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Bem-vindo a #{currentChannel.name}</h2><p>Este é o começo deste canal em {activeCommunity.name}.</p></div>
+        <div className="messages" ref={messagesContainer} onScroll={handleScrollMessages}>
+          {hasMoreMessages ? (
+            <div className="load-more-container">
+              <button
+                type="button"
+                className="load-more-messages-button"
+                onClick={() => void loadOlderMessages()}
+                disabled={loadingOlderMessages}
+              >
+                {loadingOlderMessages ? <Loader2 className="spin" size={14} /> : <History size={14} />}
+                {loadingOlderMessages ? "Carregando mensagens anteriores…" : "Carregar mensagens anteriores"}
+              </button>
+            </div>
+          ) : (
+            <div className="channel-intro"><div><MessageCircle size={21} /></div><h2>Bem-vindo a #{currentChannel.name}</h2><p>Este é o começo deste canal em {activeCommunity.name}.</p></div>
+          )}
           {visibleMessages.map((message, index) => {
             if (message.messageKind === "system") {
               return <article id={`message-${message.id}`} className="system-message" key={message.id}><span>{message.content}</span><time>{message.time}</time></article>;

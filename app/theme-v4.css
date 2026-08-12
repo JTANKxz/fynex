@@ -342,3 +342,48 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .auth-card { border-radius: 12px; }
   .community-modal, .channel-modal, .profile-edit-modal, .connections-modal, .media-settings-modal { border-radius: 12px; }
 }
+
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.load-more-messages-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  border-radius: 10px;
+  color: #c4b9ff;
+  background: rgba(22, 19, 32, 0.85);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.load-more-messages-button:hover:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.55);
+  color: #ffffff;
+  background: rgba(35, 29, 52, 0.95);
+}
+
+.load-more-messages-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.spin {
+  animation: spin-anim 1s linear infinite;
+}
+
+@keyframes spin-anim {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+

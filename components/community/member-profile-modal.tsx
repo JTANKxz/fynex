@@ -59,8 +59,8 @@ export function MemberProfileModal({ profile, currentUserId, communityId, commun
   }, [communityId, currentUserId, profile.id, supabase]);
   useEffect(() => {
     if (!currentUserId || currentUserId === profile.id) {
-      setMutualFriends([]);
-      return;
+      const timer = window.setTimeout(() => setMutualFriends([]), 0);
+      return () => window.clearTimeout(timer);
     }
     let active = true;
     void supabase.rpc("get_mutual_friends", { target_user_id: profile.id }).then(({ data, error }) => {

@@ -44,7 +44,11 @@ export function CommunitySettingsModal({ community, canDelete, onClose, onChange
     return () => window.clearTimeout(refreshTimer);
   }, [refreshLibrary]);
   const refreshBans = useCallback(async () => { const supabase = createClient(); const { data } = await supabase.from("community_bans").select("user_id,banned_by,created_at,reason").eq("community_id", community.id).order("created_at", { ascending: false }); const ids = (data ?? []).map((ban) => ban.user_id); const { data: profiles } = ids.length ? await supabase.from("profiles").select("id,display_name,username,avatar_url,accent_color").in("id", ids) : { data: [] }; const profileMap = new Map((profiles ?? []).map((profile) => [profile.id, profile])); setBans((data ?? []).map((ban) => ({ ...ban, profile: profileMap.get(ban.user_id) }))); }, [community.id]);
-  useEffect(() => { if (tab === "moderation") void refreshBans(); }, [refreshBans, tab]);
+  useEffect(() => {
+    if (tab !== "moderation") return;
+    const timer = window.setTimeout(() => void refreshBans(), 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshBans, tab]);
 
   useEffect(() => {
     if (!state.success || notifiedSuccess.current === state.success) return;
