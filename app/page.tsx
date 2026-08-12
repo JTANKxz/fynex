@@ -728,6 +728,9 @@ export default function Home() {
     setStreamViewerOpen(false);
     stream.getTracks().forEach((track) => track.stop());
     if (voiceRef.current) post({ type: "screen-state", channel: voiceRef.current, screenSharing: false });
+    if (voiceRealtime.current && userRef.current && voiceRef.current) {
+      void voiceRealtime.current.track({ ...userRef.current, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false, screenSharing: false });
+    }
     if (renegotiate) await renegotiatePeers();
   }, [post, renegotiatePeers]);
 
@@ -778,6 +781,9 @@ export default function Home() {
       setStreamViewerOpen(true);
       videoTrack.onended = () => { void stopScreenShare(); };
       post({ type: "screen-state", channel: voiceRef.current, screenSharing: true, screenHeight: appliedSettings.height, screenFrameRate: appliedSettings.frameRate });
+      if (voiceRealtime.current && userRef.current && voiceRef.current) {
+        void voiceRealtime.current.track({ ...userRef.current, onlineAt: new Date().toISOString(), voiceChannel: voiceRef.current, muted: false, screenSharing: true });
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "NotAllowedError") return;
       setMicError("Não foi possível iniciar a transmissão de tela.");
@@ -815,7 +821,7 @@ export default function Home() {
         },
       })
       .on("presence", { event: "sync" }, () => {
-        const presences = Object.values(channel.presenceState<PresenceUser>()).flat();
+        const presences = Object.values(channel.presenceState<PresenceUser & { screenSharing?: boolean; screenHeight?: number; screenFrameRate?: number }>()).flat();
         const nextVoiceMembers: Record<string, PresenceUser> = {};
         presences.forEach((presence) => {
           if (presence.id && presence.voiceChannel) nextVoiceMembers[presence.id] = presence;
@@ -831,6 +837,21 @@ export default function Home() {
         );
         peers.current.forEach((_, id) => {
           if (!connectedIds.has(id)) closePeer(id);
+        });
+        // Sync screen sharing state from presence into voicePeers!
+        setVoicePeers((old) => {
+          const next = { ...old };
+          presences.forEach((p) => {
+            if (!p.id || p.id === realtimeUser.id || p.voiceChannel !== currentVoiceChannel) return;
+            next[p.id] = {
+              ...(next[p.id] ?? { id: p.id, name: p.name ?? "Visitante", muted: false, speaking: false }),
+              name: p.name ?? next[p.id]?.name ?? "Visitante",
+              screenSharing: p.screenSharing ?? next[p.id]?.screenSharing ?? false,
+              screenHeight: p.screenHeight ?? next[p.id]?.screenHeight,
+              screenFrameRate: p.screenFrameRate ?? next[p.id]?.screenFrameRate,
+            };
+          });
+          return next;
         });
         presences.forEach((presence) => {
           if (
@@ -1571,7 +1592,8 @@ export default function Home() {
       setAudioTrackVersion((version) => version + 1);
       const current = userRef.current;
       if (current) {
-        await voiceRealtime.current.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: channel, muted: false });
+        await voiceRealtime.current.track({ ...current, onlineAt: new Date().toISOString(), voiceChannel: channel, muted: false, screenSharing });
+        post({ type: "announce", channel, name: current.name });
       }
       setVoiceConnectionState("connected");
     } catch {
