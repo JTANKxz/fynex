@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, Home as HomeIcon, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { ChannelCategory, CommunityMemberRole, CommunityMemberTag, CommunityRoleIcon, CommunityRoleWithIcon, CommunitySticker, CommunityTag, Message as MessageRow, MessageReaction, PollVote, Profile, VoiceModerationEvent } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction, toggleMessageReactionAction, votePollAction } from "@/app/actions/messages";
@@ -1953,12 +1953,12 @@ export default function Home() {
 
   if (homeOpen) return <main className="app-shell home-app-shell">
     <aside className="server-rail" aria-label="Barra principal">
-      {/* DEVE CONTER A MESMA LOGO DA PLATAFORMA QUE APARECE NA SPLAHS */}
-      <button className="server brand-server active" onClick={openHome} aria-label="Início"><span className="brand-mark small">F</span></button>
+      <button className="server brand-server active" onClick={openHome} aria-label="Início"><span className="brand-mark rail-brand-mark">F</span></button>
       <div className="rail-divider" />
       <nav className="rail-community-list" aria-label="Suas comunidades">{communities.map((community) => <button key={community.id} className={`rail-community ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)} aria-label={`Abrir ${community.name}`} title={community.name}><span style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span>{(unreadCommunityCounts[community.id] ?? 0) > 0 && <b className="rail-unread-count">{unreadCommunityCounts[community.id] > 99 ? "99+" : unreadCommunityCounts[community.id]}</b>}</button>)}<button className="rail-community rail-community-add" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade"><Plus size={18} /></button></nav>
       <div className="rail-spacer" />
       <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}</button>
+      <button className="top-connections" onClick={() => { setDirectMessageTarget(null); setDirectMessagesOpen(true); }} aria-label="Mensagens privadas" title="Mensagens privadas"><MessageCircle size={16} /></button>
       <button className="top-connections" onClick={() => activeCommunity && setConnectionsTab("friends")} aria-label="Amigos e convites"><UserPlus size={16} /></button>
       <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} small /></Link>
     </aside>
@@ -1971,12 +1971,12 @@ export default function Home() {
     {directMessagesOpen && <DirectMessagesModal currentUserId={user.id} initialProfile={directMessageTarget} onClose={() => { setDirectMessagesOpen(false); setDirectMessageTarget(null); }} onViewProfile={openExternalProfile} />}
   </main>;
 
-  if (!activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>Crie sua primeira comunidade para começar.</p><button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
+  if (!activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>Preparando sua página inicial…</p></main>;
 
   return (
     <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${membersCollapsed ? "members-collapsed" : ""}`} style={{ "--community-accent": activeCommunity.accent_color } as React.CSSProperties}>
       <aside className="server-rail" aria-label="Barra principal">
-        <button className="server brand-server" onClick={openHome} aria-label="Início"><HomeIcon size={16} /></button>
+        <button className="server brand-server" onClick={openHome} aria-label="Início"><span className="brand-mark rail-brand-mark">F</span></button>
         <div className="rail-divider" />
         <nav className="rail-community-list" aria-label="Suas comunidades">
           {communities.map((community) => (
