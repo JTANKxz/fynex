@@ -38,6 +38,7 @@ type MessageComposerProps = {
 export function MessageComposer({ attachment, channelName, draft, realtimeConnected, sending, uploadProgress, members, stickers, canMentionEveryone, focusRequestKey, onAttachment, onDraft, onRemoveAttachment, linkUrl, linkPreviewRemoved, onRemoveLinkPreview, onRestoreLinkPreview, onCreatePoll, onSendSticker, onSubmit }: MessageComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const textInput = useRef<HTMLTextAreaElement>(null);
+  const isTouchDevice = useRef(false);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [linkPreviewResult, setLinkPreviewResult] = useState<{ requestedUrl: string; preview: LinkPreview } | null>(null);
   const [linkPreviewLoading, setLinkPreviewLoading] = useState(false);
@@ -58,6 +59,10 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
   const selectMention = (username: string) => {
     onDraft(draft.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1@${username} `));
   };
+  useEffect(() => {
+    isTouchDevice.current = window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+  }, []);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggestions.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
@@ -65,7 +70,10 @@ export function MessageComposer({ attachment, channelName, draft, realtimeConnec
     } else if (suggestions.length && (event.key === "Enter" || event.key === "Tab")) {
       event.preventDefault();
       selectMention(suggestions[activeSuggestion]?.username ?? suggestions[0].username);
-    } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+    } else if (event.key === "Enter" && !event.shiftKey && !isTouchDevice.current) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
   };
 
   useEffect(() => {

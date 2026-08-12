@@ -220,7 +220,10 @@
   .composer { margin: 0 10px 10px; }
   .selectedFile { grid-template-columns: 62px minmax(0, 1fr) 32px; min-height: 82px; gap: 10px; padding: 9px; }
   .preview { width: 62px; height: 62px; }
-  .inputBar { padding: 0 8px; }
-  .toolButton:first-of-type { display: none; }
+  .inputBar { min-height: 44px; padding: 6px 8px; align-items: center; }
+  .textInput { padding: 0; margin: 0; }
+  .toolButton { margin-bottom: 0; }
+  .addButton { margin-bottom: 0; }
+  .sendButton { margin-bottom: 0; }
 }
 .emojiRoot{position:relative}.emojiPicker{position:absolute;z-index:30;right:0;bottom:46px}
