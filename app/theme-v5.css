@@ -2,8 +2,9 @@
 
 :root { --fynex-style-release: 5; }
 
-.home-app-shell{grid-template-columns:74px minmax(0,1fr);overflow:hidden}.home-app-shell .server-rail{grid-row:1;grid-column:1}.home-app-shell>section{grid-column:2;grid-row:1;min-width:0}.brand-server svg{display:none}.brand-server.active{color:#fff;background:rgba(139,92,246,.15)}
-@media(max-width:700px){.home-app-shell{display:block;min-height:100dvh;overflow:auto}.home-app-shell .server-rail{display:none}}
+.home-app-shell{grid-template-columns:74px minmax(0,1fr);overflow:hidden}.home-app-shell .server-rail{grid-row:1;grid-column:1}.home-app-shell>section{grid-column:2;grid-row:1;min-width:0}.brand-server::before{display:none}.brand-server svg{display:block}.brand-server.active{color:#fff;background:rgba(139,92,246,.15)}
+.mobile-members-button{display:none!important}
+@media(max-width:700px){.home-app-shell{display:block;min-height:100dvh;overflow:auto}.home-app-shell .server-rail{display:none}.header-actions>.mobile-members-button{display:grid!important}.top-connections[aria-label="Mensagens privadas"]::after{content:"Conversas";font-size:9px}}
 
 .rail-unread-count { position: absolute; z-index: 3; top: -5px; right: -5px; min-width: 17px; height: 17px; box-sizing: border-box; display: grid; place-items: center; padding: 0 4px; border: 2px solid #0b0e14; border-radius: 999px; color: #fff; background: #657086; font-size: 7px; line-height: 1; }
 .community-unread-count { min-width: 19px; height: 19px; display: grid; place-items: center; padding: 0 5px; border-radius: 999px; color: #e9ebf0; background: #414754; font-size: 7px; font-style: normal; }

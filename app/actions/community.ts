@@ -208,6 +208,25 @@ export async function createChannelCategoryAction(_state: ChannelCategoryActionS
   return { categoryId: category.id };
 }
 
+const deleteChannelCategorySchema = z.object({ communityId: z.uuid(), categoryId: z.uuid() });
+
+export async function deleteChannelCategoryAction(_state: ChannelCategoryActionState, formData: FormData): Promise<ChannelCategoryActionState> {
+  const parsed = deleteChannelCategorySchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "Categoria inválida." };
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  if (!data?.claims?.sub) return { error: "Sua sessão expirou. Entre novamente." };
+  const { data: deleted, error } = await supabase.from("channel_categories")
+    .delete()
+    .eq("id", parsed.data.categoryId)
+    .eq("community_id", parsed.data.communityId)
+    .select("id")
+    .maybeSingle();
+  if (error || !deleted) return { error: "Você não tem permissão para excluir esta categoria." };
+  revalidatePath("/");
+  return { categoryId: deleted.id };
+}
+
 const deleteChannelSchema = z.object({ communityId: z.uuid(), channelId: z.uuid() });
 
 export async function deleteChannelAction(_state: ChannelActionState, formData: FormData): Promise<ChannelActionState> {

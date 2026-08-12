@@ -62,6 +62,7 @@ export default function Home() {
   const [channelModalType, setChannelModalType] = useState<"text" | "voice" | null>(null);
   const [newChannelCategoryId, setNewChannelCategoryId] = useState<string | null>(null);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<ChannelCategory | null>(null);
   const [channelLayoutOpen, setChannelLayoutOpen] = useState(false);
   const [editingChannel, setEditingChannel] = useState<CommunityChannel | null>(null);
   const [connectionsTab, setConnectionsTab] = useState<ConnectionsTab | null>(null);
@@ -108,6 +109,7 @@ export default function Home() {
   const [voicePeers, setVoicePeers] = useState<Record<string, VoicePeer>>({});
   const [voiceMembers, setVoiceMembers] = useState<Record<string, PresenceUser>>({});
   const [onlineUsers, setOnlineUsers] = useState<Record<string, PresenceUser>>({});
+  const [globalOnlineUserIds, setGlobalOnlineUserIds] = useState<string[]>([]);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioInput, setSelectedAudioInput] = useState("");
   const [noiseSuppression, setNoiseSuppression] = useState(() => typeof window === "undefined" ? true : window.localStorage.getItem("fynex:noise-cancellation") !== "off");
@@ -144,6 +146,7 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [membersCollapsed, setMembersCollapsed] = useState(false);
   const voiceRef = useRef<string | null>(null);
+  const homeOpenRef = useRef(true);
   const watchingScreenRef = useRef<string | null>(null);
   const userRef = useRef<User | null>(null);
   const localStream = useRef<MediaStream | null>(null);
@@ -292,10 +295,16 @@ export default function Home() {
   }, []);
 
   const syncWorkspaceUrl = useCallback((communityId: string, channelId: string | null) => {
-    if (typeof window === "undefined" || voiceRef.current) return;
+    if (typeof window === "undefined" || voiceRef.current || homeOpenRef.current) return;
     const query = new URLSearchParams({ community: communityId });
     if (channelId) query.set("channel", channelId);
     window.history.replaceState(window.history.state, "", `/?${query.toString()}`);
+  }, []);
+
+  const openHome = useCallback(() => {
+    homeOpenRef.current = true;
+    setHomeOpen(true);
+    if (typeof window !== "undefined" && !voiceRef.current) window.history.replaceState(window.history.state, "", "/");
   }, []);
 
   const loadWorkspace = useCallback(async (preferredCommunityId?: string, preferredChannelId?: string) => {
@@ -416,6 +425,10 @@ export default function Home() {
       userRef.current = current;
       setUser(current);
       const query = new URLSearchParams(window.location.search);
+      if (query.get("community")) {
+        homeOpenRef.current = false;
+        setHomeOpen(false);
+      }
       await loadWorkspace(query.get("community") ?? undefined, query.get("channel") ?? undefined);
       setAuthLoading(false);
     })();
@@ -428,6 +441,22 @@ export default function Home() {
   }, [activeChannel, activeCommunityId, syncWorkspaceUrl, voiceChannel]);
   useEffect(() => { watchingScreenRef.current = watchingScreenId; }, [watchingScreenId]);
   useEffect(() => { userRef.current = user; }, [user]);
+  useEffect(() => { homeOpenRef.current = homeOpen; }, [homeOpen]);
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase.channel("fynex:presence:v1", { config: { presence: { key: user.id } } });
+    channel.on("presence", { event: "sync" }, () => {
+      const ids = new Set(Object.values(channel.presenceState<{ id?: string; status?: string }>()).flat()
+        .filter((presence) => presence.id && presence.status !== "invisible")
+        .map((presence) => presence.id as string));
+      setGlobalOnlineUserIds([...ids]);
+    }).subscribe(async (status) => {
+      if (status === "SUBSCRIBED" && user.status !== "invisible") {
+        await channel.track({ id: user.id, status: user.status, onlineAt: new Date().toISOString() });
+      }
+    });
+    return () => { void channel.untrack(); void supabase.removeChannel(channel); };
+  }, [supabase, user]);
   useEffect(() => {
     const syncFullscreenState = () => setStreamFullscreen(document.fullscreenElement === screenStage.current);
     document.addEventListener("fullscreenchange", syncFullscreenState);
@@ -918,13 +947,14 @@ export default function Home() {
       }
     };
 
-    const channel = supabase
-      .channel(`fynex:community:${activeCommunityId}`, {
-        config: {
-          presence: { key: realtimeUser.id },
-          broadcast: { self: false, ack: false },
-        },
-      })
+    const channel = supabase.channel(`fynex:community:${activeCommunityId}`, {
+      config: {
+        presence: { key: realtimeUser.id },
+        broadcast: { self: false, ack: false },
+      },
+    });
+
+    channel
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState<PresenceUser>();
         const next: Record<string, PresenceUser> = {};
@@ -1758,13 +1788,19 @@ export default function Home() {
 
   const handleCommunityCreated = async (communityId: string) => {
     setCreateCommunityOpen(false);
+    homeOpenRef.current = false;
     setHomeOpen(false);
     await loadWorkspace(communityId);
   };
 
   const selectCommunity = async (communityId: string) => {
+    homeOpenRef.current = false;
     setHomeOpen(false);
-    if (communityId === activeCommunityId) return;
+    if (communityId === activeCommunityId) {
+      syncWorkspaceUrl(communityId, activeChannel);
+      window.requestAnimationFrame(() => messagesContainer.current?.scrollTo({ top: messagesContainer.current.scrollHeight, behavior: "auto" }));
+      return;
+    }
     setVoicePanelChannelId(null);
     setPinnedVoiceUserId(null);
     await loadWorkspace(communityId);
@@ -1890,6 +1926,7 @@ export default function Home() {
   const openNotification = async (notification: AppNotification) => {
     setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item));
     setNotificationsOpen(false);
+    homeOpenRef.current = false;
     setHomeOpen(false);
     await loadWorkspace(notification.communityId, notification.channelId);
   };
@@ -1916,7 +1953,8 @@ export default function Home() {
 
   if (homeOpen) return <main className="app-shell home-app-shell">
     <aside className="server-rail" aria-label="Barra principal">
-      <button className="server brand-server active" onClick={() => setHomeOpen(true)} aria-label="Início do FYNEX"><span>FYNEX</span></button>
+      {/* DEVE CONTER A MESMA LOGO DA PLATAFORMA QUE APARECE NA SPLAHS */}
+      <button className="server brand-server active" onClick={openHome} aria-label="Início"><span className="brand-mark small">F</span></button>
       <div className="rail-divider" />
       <nav className="rail-community-list" aria-label="Suas comunidades">{communities.map((community) => <button key={community.id} className={`rail-community ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)} aria-label={`Abrir ${community.name}`} title={community.name}><span style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span>{(unreadCommunityCounts[community.id] ?? 0) > 0 && <b className="rail-unread-count">{unreadCommunityCounts[community.id] > 99 ? "99+" : unreadCommunityCounts[community.id]}</b>}</button>)}<button className="rail-community rail-community-add" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade"><Plus size={18} /></button></nav>
       <div className="rail-spacer" />
@@ -1924,8 +1962,10 @@ export default function Home() {
       <button className="top-connections" onClick={() => activeCommunity && setConnectionsTab("friends")} aria-label="Amigos e convites"><UserPlus size={16} /></button>
       <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} small /></Link>
     </aside>
-    <HomeDashboard currentUserId={user.id} communities={communities} unreadCounts={unreadCommunityCounts} onOpenCommunity={(communityId) => void selectCommunity(communityId)} onOpenFriends={() => activeCommunity && setConnectionsTab("friends")} onOpenMessages={() => { setDirectMessageTarget(null); setDirectMessagesOpen(true); }} onOpenProfile={openExternalProfile} onCreateCommunity={() => setCreateCommunityOpen(true)} />
+    <HomeDashboard currentUserId={user.id} profile={{ name: user.name, color: user.color, avatarUrl: user.avatarUrl ?? null }} onlineUserIds={globalOnlineUserIds} communities={communities} unreadCounts={unreadCommunityCounts} onOpenCommunity={(communityId) => void selectCommunity(communityId)} onOpenFriends={() => activeCommunity && setConnectionsTab("friends")} onOpenMessages={() => { setDirectMessageTarget(null); setDirectMessagesOpen(true); }} onOpenNotifications={() => setNotificationsOpen(true)} onOpenProfile={openExternalProfile} onOpenProfilePage={() => router.push("/profile")} onCreateCommunity={() => setCreateCommunityOpen(true)} />
+    {notificationsOpen && <aside className="notifications-popover" aria-label="Notificações"><header><strong>Notificações</strong><button onClick={() => setNotificationsOpen(false)} aria-label="Fechar notificações"><X size={15}/></button></header>{incomingFriendRequests.map((request) => <article key={`${request.userA}-${request.userB}`}><button className="friend-notification-person" onClick={() => openExternalProfile(request.person)}><Avatar name={request.person.display_name} color={request.person.accent_color} imageUrl={request.person.avatar_url} small status={false}/><span><strong>{request.person.display_name}</strong><small>Pedido de amizade</small></span></button><div><button onClick={() => void respondToFriendRequest(request, "accepted")}><Check size={13}/>Aceitar</button><button onClick={() => void respondToFriendRequest(request, "declined")}><X size={13}/>Recusar</button></div></article>)}{notifications.map((notification) => <button key={notification.id} className={notification.read ? "read" : ""} onClick={() => void openNotification(notification)}><Bell size={14}/><span><strong>{notification.author}</strong><small>{notification.text} em #{notification.channelName}</small></span></button>)}{!incomingFriendRequests.length && !notifications.length && <p>Nenhuma notificação por enquanto.</p>}</aside>}
     {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
+    {activeCommunity && communitySettingsOpen && <CommunitySettingsModal community={activeCommunity} canDelete={currentAccess.isOwner} onClose={() => setCommunitySettingsOpen(false)} onAccentPreview={(accentColor) => setCommunities((current) => current.map((community) => community.id === activeCommunity.id ? { ...community, accent_color: accentColor } : community))} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onDeleted={() => { setCommunitySettingsOpen(false); void loadWorkspace(); }} />}
     {activeCommunity && connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onViewProfile={openExternalProfile} onMessage={(profile) => { setConnectionsTab(null); setDirectMessageTarget(profile); setDirectMessagesOpen(true); }} />}
     {selectedProfile && <MemberProfileModal profile={selectedProfile} currentUserId={user.id} onClose={() => setSelectedProfile(null)} onMessage={(profile) => { setSelectedProfile(null); setDirectMessageTarget(profile); setDirectMessagesOpen(true); }} />}
     {directMessagesOpen && <DirectMessagesModal currentUserId={user.id} initialProfile={directMessageTarget} onClose={() => { setDirectMessagesOpen(false); setDirectMessageTarget(null); }} onViewProfile={openExternalProfile} />}
@@ -1936,7 +1976,7 @@ export default function Home() {
   return (
     <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${membersCollapsed ? "members-collapsed" : ""}`} style={{ "--community-accent": activeCommunity.accent_color } as React.CSSProperties}>
       <aside className="server-rail" aria-label="Barra principal">
-        <button className="server brand-server" onClick={() => setHomeOpen(true)} aria-label="Início do FYNEX"><HomeIcon size={16} /><span>FYNEX</span></button>
+        <button className="server brand-server" onClick={openHome} aria-label="Início"><HomeIcon size={16} /></button>
         <div className="rail-divider" />
         <nav className="rail-community-list" aria-label="Suas comunidades">
           {communities.map((community) => (
@@ -1981,14 +2021,14 @@ export default function Home() {
         <nav className="channel-nav">
           <section>
             <div className="section-title"><span>CANAIS DE TEXTO</span>{currentAccess.manageChannels && <button onClick={() => { setNewChannelCategoryId(null); setChannelModalType("text"); }} aria-label="Criar canal de texto" title="Criar canal de texto"><Plus size={14} /></button>}</div>
-            {textChannels.filter((channel) => !channel.category_id).map((channel) => <div className="channel-row" key={channel.id}><button className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); syncWorkspaceUrl(activeCommunity.id, channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.name}<i>{onlineMembers.length}</i></button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`} title="Editar canal"><Pencil size={12} /></button>}</div>)}
+            {textChannels.filter((channel) => !channel.category_id).map((channel) => <div className="channel-row" key={channel.id}><button className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); syncWorkspaceUrl(activeCommunity.id, channel.id); setMobileNav(false); }}><MessageCircle size={16} />{channel.name}<i>{onlineMembers.length}</i></button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar ou excluir canal ${channel.name}`} title="Editar ou excluir canal"><Pencil size={12} /></button>}</div>)}
           </section>
           <section className="voice-section">
             <div className="section-title"><span>CANAIS DE VOZ</span>{currentAccess.manageChannels && <button onClick={() => setChannelModalType("voice")} aria-label="Criar canal de voz" title="Criar canal de voz"><Plus size={14} /></button>}</div>
             {voiceChannels.filter((channel) => !channel.category_id).map((channel) => {
               const channelMembers = getVoiceMembers(channel.id);
               return <div key={channel.id}>
-                <div className="channel-row"><button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void openVoiceChannel(channel.id)} disabled={voiceChannel !== channel.id && channelMembers.length >= (channel.user_limit ?? 10)}><Radio size={16} />{channel.name}<small className="voice-capacity">{channelMembers.length}/{channel.user_limit ?? 10}</small>{voiceChannel === channel.id && <b className={`live-pill ${voiceConnectionState}`}>{voiceConnectionState === "connected" ? "CONECTADO" : voiceConnectionLabel.toUpperCase()}</b>}</button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`} title="Editar canal"><Pencil size={12} /></button>}</div>
+                <div className="channel-row"><button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void openVoiceChannel(channel.id)} disabled={voiceChannel !== channel.id && channelMembers.length >= (channel.user_limit ?? 10)}><Radio size={16} />{channel.name}<small className="voice-capacity">{channelMembers.length}/{channel.user_limit ?? 10}</small>{voiceChannel === channel.id && <b className={`live-pill ${voiceConnectionState}`}>{voiceConnectionState === "connected" ? "CONECTADO" : voiceConnectionLabel.toUpperCase()}</b>}</button>{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar ou excluir canal ${channel.name}`} title="Editar ou excluir canal"><Pencil size={12} /></button>}</div>
                 {channelMembers.length > 0 && <div className="voice-list">
                   {channelMembers.map((member) => {
                     const isCurrentUser = member.id === user.id;
@@ -2002,7 +2042,7 @@ export default function Home() {
               </div>;
             })}
           </section>
-          {channelCategories.map((category) => <section className="channel-category" key={category.id}><div className="section-title"><span>{category.name.toUpperCase()}</span>{currentAccess.manageChannels && <button onClick={() => { setNewChannelCategoryId(category.id); setChannelModalType("text"); }} aria-label={`Criar canal na categoria ${category.name}`} title="Criar canal nesta categoria"><Plus size={14}/></button>}</div>{communityChannels.filter((channel) => channel.category_id === category.id).map((channel) => <div className="channel-row" key={channel.id}>{channel.type === "text" ? <button className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); syncWorkspaceUrl(activeCommunity.id, channel.id); setMobileNav(false); }}><MessageCircle size={16}/>{channel.name}</button> : <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void openVoiceChannel(channel.id)}><Radio size={16}/>{channel.name}<small className="voice-capacity">{getVoiceMembers(channel.id).length}/{channel.user_limit ?? 10}</small></button>}{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar canal ${channel.name}`}><Pencil size={12}/></button>}</div>)}</section>)}
+          {channelCategories.map((category) => <section className="channel-category" key={category.id}><div className="section-title"><span>{category.name.toUpperCase()}</span>{currentAccess.manageChannels && <><button onClick={() => { setNewChannelCategoryId(category.id); setChannelModalType("text"); }} aria-label={`Criar canal na categoria ${category.name}`} title="Criar canal nesta categoria"><Plus size={14}/></button><button onClick={() => setEditingCategory(category)} aria-label={`Excluir categoria ${category.name}`} title="Excluir categoria"><Pencil size={12}/></button></>}</div>{communityChannels.filter((channel) => channel.category_id === category.id).map((channel) => <div className="channel-row" key={channel.id}>{channel.type === "text" ? <button className={`channel ${activeChannel === channel.id ? "selected" : ""}`} onClick={() => { setActiveChannel(channel.id); syncWorkspaceUrl(activeCommunity.id, channel.id); setMobileNav(false); }}><MessageCircle size={16}/>{channel.name}</button> : <button className={`channel voice-channel ${voiceChannel === channel.id ? "selected" : ""}`} onClick={() => void openVoiceChannel(channel.id)}><Radio size={16}/>{channel.name}<small className="voice-capacity">{getVoiceMembers(channel.id).length}/{channel.user_limit ?? 10}</small></button>}{currentAccess.manageChannels && <button className="channel-edit" onClick={() => setEditingChannel(channel)} aria-label={`Editar ou excluir canal ${channel.name}`} title="Editar ou excluir canal"><Pencil size={12}/></button>}</div>)}</section>)}
         </nav>
         {(micError || realtimeError) && <div className="mic-error">{micError || realtimeError}</div>}
         {voiceChannel && <div className={`voice-connection ${voiceConnectionState}`}><div>{voiceConnectionState === "connected" ? <Radio className="signal-icon" size={17} /> : <WifiOff className="signal-icon" size={17} />}<strong>{voiceConnectionLabel}</strong><small>{voiceConnectionState === "reconnecting" ? "A chamada será retomada automaticamente" : `${voiceContext?.communityName} · ${voiceName}`}</small></div><span className="voice-connection-actions">{voiceContext?.communityId !== activeCommunityId && <button onClick={() => void returnToCallCommunity()} aria-label="Voltar à comunidade da chamada" title="Voltar à comunidade da chamada"><MessageCircle size={14} /></button>}<button onClick={leaveVoice} aria-label="Desconectar da voz"><PhoneOff size={15} /></button></span></div>}
@@ -2021,7 +2061,7 @@ export default function Home() {
           <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Abrir canais"><Menu size={18} /></button>
           <span className="hash"><Hash size={16} /></span><strong>{currentChannel.name}</strong><i />
           <p>{activeCommunity.description || `Conversas em ${activeCommunity.name}`}</p>
-          <div className="header-actions"><div className={`connection-state ${chatConnectionState}`} title={chatConnectionLabel}>{chatConnectionState === "connected" ? <Wifi size={13} /> : <WifiOff size={13} />}<span>{chatConnectionLabel}</span></div><div className="header-online"><span />{onlineMembers.length} online</div><button aria-label="Notificações" onClick={() => setNotificationsOpen(true)}><Bell size={16} /></button><label><Search size={14} /><input value={messageSearch} onChange={(event) => setMessageSearch(event.target.value)} placeholder="Buscar mensagens ou pessoas" />{messageSearch && <button onClick={() => setMessageSearch("")} aria-label="Limpar busca"><X size={12} /></button>}</label></div>
+          <div className="header-actions"><div className={`connection-state ${chatConnectionState}`} title={chatConnectionLabel}>{chatConnectionState === "connected" ? <Wifi size={13} /> : <WifiOff size={13} />}<span>{chatConnectionLabel}</span></div><div className="header-online"><span />{onlineMembers.length} online</div><button className="mobile-members-button" aria-label="Ver membros" onClick={() => setMembersOpen(true)}><Users size={16} /></button><button aria-label="Notificações" onClick={() => setNotificationsOpen(true)}><Bell size={16} /></button><label><Search size={14} /><input value={messageSearch} onChange={(event) => setMessageSearch(event.target.value)} placeholder="Buscar mensagens ou pessoas" />{messageSearch && <button onClick={() => setMessageSearch("")} aria-label="Limpar busca"><X size={12} /></button>}</label></div>
         </header>
 
         {voicePanelChannelId && <section className="voice-room-stage">
@@ -2101,7 +2141,8 @@ export default function Home() {
       {channelModalType && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={channelModalType} initialCategoryId={newChannelCategoryId} categories={channelCategories} onClose={() => { setChannelModalType(null); setNewChannelCategoryId(null); }} onCreated={(id, type) => void handleChannelCreated(id, type)} />}
       {editingChannel && <CreateChannelModal communityId={activeCommunity.id} communityName={activeCommunity.name} initialType={editingChannel.type as "text" | "voice"} channel={editingChannel} categories={channelCategories} onClose={() => setEditingChannel(null)} onCreated={(id, type) => void handleChannelCreated(id, type)} onDeleted={() => { setEditingChannel(null); void loadWorkspace(activeCommunity.id); }} />}
       {categoryModalOpen && <CreateChannelCategoryModal communityId={activeCommunity.id} onClose={() => setCategoryModalOpen(false)} onCreated={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} />}
-      {channelLayoutOpen && <ManageChannelLayoutModal communityId={activeCommunity.id} categories={channelCategories} channels={communityChannels} onClose={() => setChannelLayoutOpen(false)} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onCreateCategory={() => setCategoryModalOpen(true)} />}
+      {editingCategory && <CreateChannelCategoryModal communityId={activeCommunity.id} category={editingCategory} onClose={() => setEditingCategory(null)} onCreated={() => { setEditingCategory(null); setChannelLayoutOpen(false); void loadWorkspace(activeCommunity.id, activeChannel ?? undefined); }} />}
+      {channelLayoutOpen && <ManageChannelLayoutModal communityId={activeCommunity.id} categories={channelCategories} channels={communityChannels} onClose={() => setChannelLayoutOpen(false)} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onCreateCategory={() => setCategoryModalOpen(true)} onDeleteCategory={(category) => { setChannelLayoutOpen(false); setEditingCategory(category); }} />}
       {connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onViewProfile={openExternalProfile} onMessage={(profile) => { setConnectionsTab(null); setDirectMessageTarget(profile); setDirectMessagesOpen(true); }} />}
       {membersOpen && <CommunityMembersModal communityId={activeCommunity.id} communityName={activeCommunity.name} currentUserId={user.id} members={displayedCommunityMembers} roles={communityRoles} roleIcons={communityRoleIcons} assignments={memberRoleAssignments} tags={communityTags} tagAssignments={memberTagAssignments} access={currentAccess} onViewProfile={(profile) => { setSelectedProfileContext("community"); setSelectedProfile(profile); }} onClose={() => setMembersOpen(false)} onChanged={() => void loadCommunityPeople(activeCommunity.id)} />}
       {communitySettingsOpen && <CommunitySettingsModal community={activeCommunity} canDelete={currentAccess.isOwner} onClose={() => setCommunitySettingsOpen(false)} onAccentPreview={(accentColor) => setCommunities((current) => current.map((community) => community.id === activeCommunity.id ? { ...community, accent_color: accentColor } : community))} onChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onDeleted={() => { setCommunitySettingsOpen(false); void loadWorkspace(); }} />}
