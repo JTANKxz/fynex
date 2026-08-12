@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, Home as HomeIcon, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { ChannelCategory, CommunityMemberRole, CommunityMemberTag, CommunityRoleIcon, CommunityRoleWithIcon, CommunitySticker, CommunityTag, Message as MessageRow, MessageReaction, PollVote, Profile, VoiceModerationEvent } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction, toggleMessageReactionAction, votePollAction } from "@/app/actions/messages";
@@ -39,6 +39,7 @@ import type { PollDraft } from "@/components/community/composer-extras";
 import { respondFriendRequestAction } from "@/app/actions/social";
 import { respondCommunityPairRequestAction } from "@/app/actions/community-identity";
 import { RoleIcon } from "@/components/community/role-icon";
+import { HomeDashboard } from "@/components/community/home-dashboard";
 
 const seedMessages: Message[] = [];
 type AppNotification = { id: string; author: string; text: string; communityId: string; channelId: string; channelName: string; createdAt: string; read: boolean };
@@ -74,6 +75,7 @@ export default function Home() {
   const [memberTagAssignments, setMemberTagAssignments] = useState<CommunityMemberTag[]>([]);
   const [communityStickers, setCommunityStickers] = useState<CommunitySticker[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<MemberProfile | null>(null);
+  const [homeOpen, setHomeOpen] = useState(true);
   const [selectedProfileContext, setSelectedProfileContext] = useState<"community" | "external">("community");
   const selectedProfileContextRef = useRef<"community" | "external">("community");
   const [directMessagesOpen, setDirectMessagesOpen] = useState(false);
@@ -1756,10 +1758,12 @@ export default function Home() {
 
   const handleCommunityCreated = async (communityId: string) => {
     setCreateCommunityOpen(false);
+    setHomeOpen(false);
     await loadWorkspace(communityId);
   };
 
   const selectCommunity = async (communityId: string) => {
+    setHomeOpen(false);
     if (communityId === activeCommunityId) return;
     setVoicePanelChannelId(null);
     setPinnedVoiceUserId(null);
@@ -1886,6 +1890,7 @@ export default function Home() {
   const openNotification = async (notification: AppNotification) => {
     setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item));
     setNotificationsOpen(false);
+    setHomeOpen(false);
     await loadWorkspace(notification.communityId, notification.channelId);
   };
 
@@ -1907,12 +1912,31 @@ export default function Home() {
   };
   const unreadNotifications = notifications.filter((notification) => !notification.read).length + incomingFriendRequests.length + incomingPairRequests.length;
 
-  if (!user || !activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Crie sua primeira comunidade para começar."}</p>{!authLoading && <button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>}{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
+  if (!user) return <main className="auth-loading"><span className="brand-mark large">F</span><p>{authLoading ? "Preparando seu espaço…" : "Entre para continuar."}</p></main>;
+
+  if (homeOpen) return <main className="app-shell home-app-shell">
+    <aside className="server-rail" aria-label="Barra principal">
+      <button className="server brand-server active" onClick={() => setHomeOpen(true)} aria-label="Início do FYNEX"><span>FYNEX</span></button>
+      <div className="rail-divider" />
+      <nav className="rail-community-list" aria-label="Suas comunidades">{communities.map((community) => <button key={community.id} className={`rail-community ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)} aria-label={`Abrir ${community.name}`} title={community.name}><span style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span>{(unreadCommunityCounts[community.id] ?? 0) > 0 && <b className="rail-unread-count">{unreadCommunityCounts[community.id] > 99 ? "99+" : unreadCommunityCounts[community.id]}</b>}</button>)}<button className="rail-community rail-community-add" onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade"><Plus size={18} /></button></nav>
+      <div className="rail-spacer" />
+      <button className={`top-connections notification-trigger ${unreadNotifications ? "has-unread" : ""}`} onClick={() => setNotificationsOpen((open) => !open)} aria-label="Abrir notificações"><Bell size={16} />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? "9+" : unreadNotifications}</i>}</button>
+      <button className="top-connections" onClick={() => activeCommunity && setConnectionsTab("friends")} aria-label="Amigos e convites"><UserPlus size={16} /></button>
+      <Link className="top-profile-button" href="/profile" aria-label="Abrir perfil"><Avatar name={user.name} color={user.color} imageUrl={user.avatarUrl} presenceStatus={user.status} small /></Link>
+    </aside>
+    <HomeDashboard currentUserId={user.id} communities={communities} unreadCounts={unreadCommunityCounts} onOpenCommunity={(communityId) => void selectCommunity(communityId)} onOpenFriends={() => activeCommunity && setConnectionsTab("friends")} onOpenProfile={openExternalProfile} onCreateCommunity={() => setCreateCommunityOpen(true)} />
+    {createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}
+    {activeCommunity && connectionsTab && <ConnectionsModal community={activeCommunity} currentUserId={user.id} initialTab={connectionsTab} onClose={() => setConnectionsTab(null)} onMembershipChanged={() => void loadWorkspace()} onCommunityChanged={() => void loadWorkspace(activeCommunity.id, activeChannel ?? undefined)} onViewProfile={openExternalProfile} onMessage={(profile) => { setConnectionsTab(null); setDirectMessageTarget(profile); setDirectMessagesOpen(true); }} />}
+    {selectedProfile && <MemberProfileModal profile={selectedProfile} currentUserId={user.id} onClose={() => setSelectedProfile(null)} onMessage={(profile) => { setSelectedProfile(null); setDirectMessageTarget(profile); setDirectMessagesOpen(true); }} />}
+    {directMessagesOpen && <DirectMessagesModal currentUserId={user.id} initialProfile={directMessageTarget} onClose={() => { setDirectMessagesOpen(false); setDirectMessageTarget(null); }} onViewProfile={openExternalProfile} />}
+  </main>;
+
+  if (!activeCommunity || !currentChannel) return <main className="auth-loading"><span className="brand-mark large">F</span><p>Crie sua primeira comunidade para começar.</p><button className="auth-submit compact" onClick={() => setCreateCommunityOpen(true)}><Plus size={16} />Criar comunidade</button>{createCommunityOpen && <CreateCommunityModal open onClose={() => setCreateCommunityOpen(false)} onCreated={(id) => void handleCommunityCreated(id)} />}</main>;
 
   return (
     <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${membersCollapsed ? "members-collapsed" : ""}`} style={{ "--community-accent": activeCommunity.accent_color } as React.CSSProperties}>
       <aside className="server-rail" aria-label="Barra principal">
-        <button className="server brand-server" aria-label="Início do FYNEX"><span>FYNEX</span></button>
+        <button className="server brand-server" onClick={() => setHomeOpen(true)} aria-label="Início do FYNEX"><HomeIcon size={16} /><span>FYNEX</span></button>
         <div className="rail-divider" />
         <nav className="rail-community-list" aria-label="Suas comunidades">
           {communities.map((community) => (
