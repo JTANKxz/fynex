@@ -744,14 +744,24 @@ export default function Home() {
     try {
       if (localScreenStream.current) await stopScreenShare(false);
       const economy = screenPreset === "economy";
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const displayConstraints = {
         video: {
           width: { ideal: economy ? 960 : 1280, max: economy ? 960 : 1280 },
           height: { ideal: economy ? 540 : 720, max: economy ? 540 : 720 },
           frameRate: { ideal: economy ? 24 : 30, max: economy ? 24 : 30 },
         },
-        audio: false,
-      });
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: false,
+        },
+      };
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+      } catch {
+        stream = await navigator.mediaDevices.getDisplayMedia({ ...displayConstraints, audio: false });
+      }
       const videoTrack = stream.getVideoTracks()[0];
       if (!videoTrack) throw new Error("Captura de tela sem vídeo");
       await videoTrack.applyConstraints({
@@ -2244,54 +2254,42 @@ export default function Home() {
         {voicePanelChannelId && <section className="voice-room-stage">
           <header><div><span>CANAL DE VOZ</span><strong>{voiceChannel === voicePanelChannelId ? voiceName : voiceChannels.find((channel) => channel.id === voicePanelChannelId)?.name ?? "Sala de voz"}</strong><small>{getVoiceMembers(voicePanelChannelId).length} participante(s)</small></div><button onClick={() => { setVoicePanelChannelId(null); setPinnedVoiceUserId(null); }} aria-label="Fechar visualização da chamada"><X size={18} /></button></header>
           
-          <div className="voice-room-content">
-            {activeTransmissions.length > 0 && (
-              <div className="voice-room-streams-section">
-                <header className="voice-streams-header">
-                  <MonitorUp size={15} />
-                  <span>TRANSMISSÕES AO VIVO ({activeTransmissions.length})</span>
-                </header>
-                <div className="voice-streams-grid">
-                  {activeTransmissions.map((t) => (
-                    <div key={t.id} className={`voice-stream-card ${watchingScreenId === t.id || (t.isLocal && screenSharing && streamViewerOpen) ? "active" : ""}`}>
-                      <div className="voice-stream-preview">
-                        <ScreenVideo stream={t.stream} />
-                        <div className="voice-stream-badge"><span className="live-dot" /> TRANSMISSÃO</div>
-                      </div>
-                      <div className="voice-stream-info">
-                        <strong>{t.name}</strong>
-                        <button onClick={() => {
-                          if (t.isLocal) {
-                            setStreamViewerOpen(true);
-                          } else {
-                            watchScreen(t.id);
-                            setStreamViewerOpen(true);
-                          }
-                        }}>
-                          <Eye size={13} /> {watchingScreenId === t.id || (t.isLocal && streamViewerOpen) ? "Em tela cheia" : "Assistir"}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+          <div className="voice-room-grid">
+            {activeTransmissions.map((t) => (
+              <button
+                key={`stream-${t.id}`}
+                className={`voice-room-card stream-card ${watchingScreenId === t.id || (t.isLocal && screenSharing && streamViewerOpen) ? "active" : ""}`}
+                onClick={() => {
+                  if (t.isLocal) {
+                    setStreamViewerOpen(true);
+                  } else {
+                    watchScreen(t.id);
+                    setStreamViewerOpen(true);
+                  }
+                }}
+              >
+                <div className="stream-card-video">
+                  <ScreenVideo stream={t.stream} />
+                  <span className="stream-card-badge"><span className="live-dot" /> TRANSMISSÃO</span>
                 </div>
-              </div>
-            )}
+                <strong>Transmissão de {t.name.replace(" (Você)", "")}</strong>
+                <small>Clique para expandir</small>
+              </button>
+            ))}
 
-            <div className="voice-room-grid">
-              {getVoiceMembers(voicePanelChannelId).map((member) => {
-                const peer = voicePeers[member.id];
-                const isCurrentUser = member.id === user?.id;
-                const locallyMuted = locallyMutedUsers.has(member.id);
-                const isMemberStreaming = isCurrentUser ? screenSharing : peer?.screenSharing;
-                return <button key={member.id} className={`voice-room-card ${(isCurrentUser ? speaking : peer?.speaking) ? "speaking" : ""} ${pinnedVoiceUserId === member.id ? "pinned" : ""}`} onContextMenu={(event) => { if (!canModerateVoiceMember(member.id)) return; event.preventDefault(); openVoiceModerationMenu(member, voicePanelChannelId, event.clientX, event.clientY); }} onClick={() => { setPinnedVoiceUserId((current) => current === member.id ? null : member.id); if (!isCurrentUser) openMemberProfile(member.id); }}>
-                  <Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} />
-                  <strong>{member.name}{isCurrentUser ? " (você)" : ""}</strong>
-                  <small>{locallyMuted ? "Silenciado para você" : peer?.stream || isCurrentUser ? "Na chamada" : "Conectando"}</small>
-                  {isMemberStreaming && <span className="voice-card-live-tag"><MonitorUp size={11} /> TRANSMITINDO</span>}
-                  {pinnedVoiceUserId === member.id && <i>DESTAQUE</i>}
-                </button>;
-              })}
-            </div>
+            {getVoiceMembers(voicePanelChannelId).map((member) => {
+              const peer = voicePeers[member.id];
+              const isCurrentUser = member.id === user?.id;
+              const locallyMuted = locallyMutedUsers.has(member.id);
+              const isMemberStreaming = isCurrentUser ? screenSharing : peer?.screenSharing;
+              return <button key={member.id} className={`voice-room-card ${(isCurrentUser ? speaking : peer?.speaking) ? "speaking" : ""} ${pinnedVoiceUserId === member.id ? "pinned" : ""}`} onContextMenu={(event) => { if (!canModerateVoiceMember(member.id)) return; event.preventDefault(); openVoiceModerationMenu(member, voicePanelChannelId, event.clientX, event.clientY); }} onClick={() => { setPinnedVoiceUserId((current) => current === member.id ? null : member.id); if (!isCurrentUser) openMemberProfile(member.id); }}>
+                <Avatar name={member.name} color={member.color} imageUrl={member.avatarUrl} />
+                <strong>{member.name}{isCurrentUser ? " (você)" : ""}</strong>
+                <small>{locallyMuted ? "Silenciado para você" : peer?.stream || isCurrentUser ? "Na chamada" : "Conectando"}</small>
+                {isMemberStreaming && <span className="voice-card-live-tag"><MonitorUp size={11} /> TRANSMITINDO</span>}
+                {pinnedVoiceUserId === member.id && <i>DESTAQUE</i>}
+              </button>;
+            })}
           </div>
 
           <footer><button className={muted ? "active" : ""} onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />}<span>{muted ? "Ativar microfone" : "Silenciar"}</span></button><button className={deafened ? "active" : ""} onClick={() => setDeafened(!deafened)}>{deafened ? <VolumeX size={17} /> : <Volume2 size={17} />}<span>{deafened ? "Ouvir novamente" : "Ensurdecer"}</span></button><button className={screenSharing ? "active screen" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()}>{screenSharing ? <Square size={16} /> : <MonitorUp size={17} />}<span>{screenSharing ? "Parar transmissão" : "Transmitir tela"}</span></button><button className="leave" onClick={leaveVoice}><PhoneOff size={17} /><span>Sair da chamada</span></button></footer>

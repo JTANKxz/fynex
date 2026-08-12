@@ -275,8 +275,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .channel-danger-zone form button[type="submit"] { border-color: #623742; color: #f3b2be; background: #301a20; }
 .moderation-notice { bottom: 92px; }
 
-/* Voz e transmissão. */
-.voice-room-stage, .screen-stage { border-color: var(--line); border-radius: 12px; background: #090b10; box-shadow: 0 24px 75px rgba(0,0,0,.55); }
+.voice-room-stage { inset: 0; border: 0; border-radius: inherit; background: #090b10; box-shadow: none; }
+.screen-stage { border-color: var(--line); border-radius: 12px; background: #090b10; box-shadow: 0 24px 75px rgba(0,0,0,.55); }
 .voice-room-card, .screen-invite { border-color: var(--line); border-radius: 10px; background: #151922; box-shadow: none; }
 .screen-invite-preview { border-radius: 9px; color: #a9a3e8; background: #24213d; }
 .screen-invite span, .screen-toolbar > div:first-child > svg { color: #aaa4e9; }
