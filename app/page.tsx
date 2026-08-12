@@ -558,12 +558,25 @@ export default function Home() {
     pc.ontrack = (event) => {
       const incomingStream = event.streams[0] ?? new MediaStream([event.track]);
       if (event.track.kind === "video") {
+        // Video track → screen share stream
         setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: incomingStream, screenSharing: true } }));
         event.track.onended = () => {
-          setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: undefined } }));
+          setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), screenStream: undefined, screenSharing: false } }));
         };
       } else {
-        setVoicePeers((old) => ({ ...old, [id]: { ...(old[id] ?? { id, name: peerName, muted: false, speaking: false }), stream: incomingStream } }));
+        // Audio track — check if it belongs to an existing screen stream (same stream ID)
+        setVoicePeers((old) => {
+          const existing = old[id];
+          if (existing?.screenStream && event.streams[0] && event.streams[0].id === existing.screenStream.id) {
+            // This audio belongs to the screen share stream — add it there
+            if (!existing.screenStream.getAudioTracks().some((t) => t.id === event.track.id)) {
+              existing.screenStream.addTrack(event.track);
+            }
+            return { ...old, [id]: { ...existing, screenStream: existing.screenStream } };
+          }
+          // Otherwise it's a microphone audio track
+          return { ...old, [id]: { ...(existing ?? { id, name: peerName, muted: false, speaking: false }), stream: incomingStream } };
+        });
       }
     };
     pc.onconnectionstatechange = () => {
@@ -624,13 +637,17 @@ export default function Home() {
         const screenStream = localScreenStream.current;
         if (!screenStream) return;
         const pc = makePeer(data.from, data.name ?? "Visitante");
-        const videoTrack = screenStream.getVideoTracks()[0];
-        if (data.watching && videoTrack) {
-          const alreadySending = pc.getSenders().some((sender) => sender.track?.id === videoTrack.id);
-          if (!alreadySending) pc.addTrack(videoTrack, screenStream);
+        if (data.watching) {
+          screenStream.getTracks().forEach((track) => {
+            const alreadySending = pc.getSenders().some((sender) => sender.track?.id === track.id);
+            if (!alreadySending) pc.addTrack(track, screenStream);
+          });
           screenWatchers.current.add(data.from);
         } else {
-          pc.getSenders().filter((sender) => sender.track?.kind === "video").forEach((sender) => pc.removeTrack(sender));
+          const screenTrackIds = new Set(screenStream.getTracks().map((t) => t.id));
+          pc.getSenders()
+            .filter((sender) => sender.track && screenTrackIds.has(sender.track.id))
+            .forEach((sender) => pc.removeTrack(sender));
           screenWatchers.current.delete(data.from);
         }
         setScreenViewerCount(screenWatchers.current.size);
@@ -2292,7 +2309,7 @@ export default function Home() {
               >
                 <div className="stream-card-video">
                   {t.stream ? (
-                    <ScreenVideo stream={t.stream} />
+                    <ScreenVideo stream={t.stream} muted={t.isLocal} />
                   ) : (
                     <div className="stream-loading-placeholder">
                       <MonitorUp size={28} />
@@ -2353,7 +2370,7 @@ export default function Home() {
             <div><b>{screenQualityLabel}</b><button onClick={() => setStreamViewerOpen(false)} aria-label="Minimizar transmissão"><Minimize2 size={15} /></button><button onClick={() => screenSharing ? void stopScreenShare() : stopWatchingScreen()} aria-label={screenSharing ? "Encerrar transmissão" : "Sair da transmissão"}><X size={16} /></button></div>
           </header>
           <div className="screen-player">
-            {activeScreenStream ? <ScreenVideo stream={activeScreenStream} /> : <div className="screen-loading"><span /><strong>Conectando à transmissão</strong><small>O vídeo começa assim que a conexão direta estiver pronta.</small></div>}
+            {activeScreenStream ? <ScreenVideo stream={activeScreenStream} muted={screenSharing} /> : <div className="screen-loading"><span /><strong>Conectando à transmissão</strong><small>O vídeo começa assim que a conexão direta estiver pronta.</small></div>}
           </div>
           <footer className="screen-controls">
             <div><span className="live-dot" /> AO VIVO</div>

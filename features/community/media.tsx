@@ -15,7 +15,7 @@ export function RemoteAudio({ stream, muted }: { stream?: MediaStream; muted: bo
   return <audio ref={ref} autoPlay playsInline muted={muted} />;
 }
 
-export function ScreenVideo({ stream, muted = true }: { stream: MediaStream; muted?: boolean }) {
+export function ScreenVideo({ stream, muted = false }: { stream: MediaStream; muted?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => { const video = ref.current; if (!video) return; video.srcObject = stream; void video.play().catch(() => undefined); return () => { video.srcObject = null; }; }, [stream]);
   return <video ref={ref} autoPlay playsInline muted={muted} />;
