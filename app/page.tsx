@@ -1943,8 +1943,8 @@ export default function Home() {
   const activeTransmissions = [
     ...(screenSharing && localScreenPreview ? [{ id: user?.id ?? "local", name: `${user?.name ?? "Você"} (Você)`, stream: localScreenPreview, isLocal: true }] : []),
     ...Object.entries(voicePeers)
-      .filter(([, peer]) => peer.screenSharing && peer.screenStream)
-      .map(([id, peer]) => ({ id, name: peer.name, stream: peer.screenStream!, isLocal: false }))
+      .filter(([, peer]) => peer.screenSharing)
+      .map(([id, peer]) => ({ id, name: peer.name, stream: peer.screenStream, isLocal: false }))
   ];
 
   const moderateVoiceParticipant = async (memberId: string, channelId: string, operation: "mute" | "disconnect") => {
@@ -2291,11 +2291,18 @@ export default function Home() {
                 }}
               >
                 <div className="stream-card-video">
-                  <ScreenVideo stream={t.stream} />
+                  {t.stream ? (
+                    <ScreenVideo stream={t.stream} />
+                  ) : (
+                    <div className="stream-loading-placeholder">
+                      <MonitorUp size={28} />
+                      <small>Ao Vivo</small>
+                    </div>
+                  )}
                   <span className="stream-card-badge"><span className="live-dot" /> TRANSMISSÃO</span>
                 </div>
                 <strong>Transmissão de {t.name.replace(" (Você)", "")}</strong>
-                <small>Clique para expandir</small>
+                <small>Clique para assistir</small>
               </button>
             ))}
 
@@ -2314,7 +2321,13 @@ export default function Home() {
             })}
           </div>
 
-          <footer><button className={muted ? "active" : ""} onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />}<span>{muted ? "Ativar microfone" : "Silenciar"}</span></button><button className={deafened ? "active" : ""} onClick={() => setDeafened(!deafened)}>{deafened ? <VolumeX size={17} /> : <Volume2 size={17} />}<span>{deafened ? "Ouvir novamente" : "Ensurdecer"}</span></button><button className={screenSharing ? "active screen" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()}>{screenSharing ? <Square size={16} /> : <MonitorUp size={17} />}<span>{screenSharing ? "Parar transmissão" : "Transmitir tela"}</span></button><button className="leave" onClick={leaveVoice}><PhoneOff size={17} /><span>Sair da chamada</span></button></footer>
+          <footer>
+            <button className={muted ? "active" : ""} onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />}<span>{muted ? "Ativar microfone" : "Silenciar"}</span></button>
+            <button className={deafened ? "active" : ""} onClick={() => setDeafened(!deafened)}>{deafened ? <VolumeX size={17} /> : <Volume2 size={17} />}<span>{deafened ? "Ouvir novamente" : "Ensurdecer"}</span></button>
+            <button className={screenSharing ? "active screen" : ""} onClick={() => screenSharing ? void stopScreenShare() : void startScreenShare()}>{screenSharing ? <Square size={16} /> : <MonitorUp size={17} />}<span>{screenSharing ? "Parar transmissão" : "Transmitir tela"}</span></button>
+            <button onClick={() => setMediaSettingsOpen(true)} aria-label="Configurações de áudio e vídeo" title="Configurações de áudio e vídeo"><Settings size={17} /><span>Configurações</span></button>
+            <button className="leave" onClick={leaveVoice}><PhoneOff size={17} /><span>Sair da chamada</span></button>
+          </footer>
         </section>}
 
         {activeTransmissions.length > 0 && !streamViewerOpen && !voicePanelChannelId && <section className="screen-invite">
