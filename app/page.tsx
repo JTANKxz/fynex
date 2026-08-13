@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, History, Loader2, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
+import { Bell, Check, Crown, Eye, EyeOff, FolderPlus, Hash, Headphones, History, Home as HomeIcon, Loader2, Maximize2, Menu, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, PhoneOff, Plus, Radio, Search, Settings, Square, UserPlus, Users, Volume2, VolumeX, Wifi, WifiOff, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { ChannelCategory, CommunityMemberRole, CommunityMemberTag, CommunityRoleIcon, CommunityRoleWithIcon, CommunitySticker, CommunityTag, Message as MessageRow, MessageReaction, PollVote, Profile, VoiceModerationEvent } from "@/lib/supabase/database.types";
 import { deleteMessageAction, sendMessageAction, toggleMessageReactionAction, votePollAction } from "@/app/actions/messages";
@@ -2161,7 +2161,7 @@ export default function Home() {
 
   if (homeOpen) return <main className={`app-shell home-app-shell ${homeRailExpanded ? "home-rail-expanded" : ""}`}>
     <aside className="server-rail" aria-label="Barra principal" aria-expanded={homeRailExpanded}>
-      <button className="server brand-server active" onClick={openHome} aria-label="Início"><span className="brand-mark rail-brand-mark">F</span><span className="rail-item-label">Início</span></button>
+      <button className="server brand-server active" onClick={openHome} aria-label="Início"><HomeIcon size={17}/><span className="rail-item-label">Início</span></button>
       <button
         className="top-connections rail-expand-toggle"
         onClick={() => setHomeRailExpanded((current) => !current)}
@@ -2202,7 +2202,7 @@ export default function Home() {
   return (
     <main className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${membersCollapsed ? "members-collapsed" : ""}`} style={{ "--community-accent": activeCommunity.accent_color } as React.CSSProperties}>
       <aside className="server-rail" aria-label="Barra principal">
-        <button className="server brand-server" onClick={openHome} aria-label="Início"><span className="brand-mark rail-brand-mark">F</span></button>
+        <button className="server brand-server" onClick={openHome} aria-label="Início"><HomeIcon size={17}/></button>
         <div className="rail-divider" />
         <nav className="rail-community-list" aria-label="Suas comunidades">
           {communities.map((community) => (
@@ -2237,7 +2237,7 @@ export default function Home() {
       {membersCollapsed && <button className="members-reopen" onClick={() => setMembersCollapsed(false)} aria-label="Mostrar membros"><PanelRightOpen size={14} /></button>}
 
       <aside className={`channel-sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className="community-dot" style={{ backgroundColor: activeCommunity.accent_color, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : activeCommunity.name.slice(0, 1).toUpperCase()}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isAdmin && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="sidebar-collapse" onClick={() => setSidebarCollapsed(true)} aria-label="Recolher canais" title="Recolher canais"><PanelLeftClose size={16} /></button><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
+        <header className={`community-header ${activeCommunity.banner_url ? "has-banner" : ""}`} style={activeCommunity.banner_url ? { backgroundImage: `linear-gradient(90deg, rgba(7,6,10,.9), rgba(7,6,10,.5)), url(${activeCommunity.banner_url})` } : undefined}><div><span className={`community-dot ${activeCommunity.avatar_url ? "" : "brand-mark"}`} style={{ backgroundColor: activeCommunity.avatar_url ? activeCommunity.accent_color : undefined, backgroundImage: activeCommunity.avatar_url ? `url(${activeCommunity.avatar_url})` : undefined }}>{activeCommunity.avatar_url ? "" : "F"}</span><strong>{activeCommunity.name}</strong></div><div className="community-header-actions">{currentAccess.isAdmin && <button onClick={() => setCommunitySettingsOpen(true)} aria-label="Configurar comunidade" title="Configurar comunidade"><Settings size={15} /></button>}<button className="sidebar-collapse" onClick={() => setSidebarCollapsed(true)} aria-label="Recolher canais" title="Recolher canais"><PanelLeftClose size={16} /></button><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Fechar menu"><X size={17} /></button></div></header>
         <nav className="community-switcher" aria-label="Suas comunidades">
           <div className="community-switcher-title"><span>SUAS COMUNIDADES</span><button onClick={() => setCreateCommunityOpen(true)} aria-label="Criar comunidade"><Plus size={14} /></button></div>
           {communities.map((community) => <button key={community.id} className={`community-switcher-item ${community.id === activeCommunityId ? "active" : ""} ${community.id === voiceContext?.communityId ? "in-call" : ""}`} onClick={() => void selectCommunity(community.id)}><span className="community-switcher-avatar" style={{ backgroundColor: community.accent_color, backgroundImage: community.avatar_url ? `url(${community.avatar_url})` : undefined }}>{community.avatar_url ? "" : community.name.slice(0, 2).toUpperCase()}</span><strong>{community.name}</strong>{(unreadCommunityCounts[community.id] ?? 0) > 0 && <em className="community-unread-count">{unreadCommunityCounts[community.id] > 99 ? "99+" : unreadCommunityCounts[community.id]}</em>}{community.id === voiceContext?.communityId && <i title={screenSharing ? "Transmitindo nesta comunidade" : "Em chamada nesta comunidade"}>{screenSharing ? <MonitorUp size={11} /> : <Radio size={11} />}</i>}</button>)}

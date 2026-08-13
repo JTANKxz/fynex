@@ -9,6 +9,7 @@
 .brand-server::before{display:none}
 .brand-server svg{display:block}
 .brand-server.active{color:#fff;background:rgba(139,92,246,.15)}
+.mobileBrand .brand-mark{background:linear-gradient(145deg,#978cff,#6452ef);box-shadow:0 10px 24px rgba(129,115,255,.28)}
 .brand-server .rail-brand-mark{width:28px;height:28px;border-radius:10px;font-size:13px;box-shadow:0 10px 24px rgba(129,115,255,.28)}
 .home-app-shell .rail-expand-toggle{position:absolute;top:60px;right:-12px;z-index:7;width:26px;min-width:26px;height:34px;padding:0;border:1px solid #2e3440;border-radius:0 8px 8px 0;color:#b8becb;background:#171c25;box-shadow:0 12px 26px rgba(0,0,0,.32)}
 .home-app-shell .rail-expand-toggle:hover{color:#fff;border-color:#5a6392;background:#22293a}
@@ -48,7 +49,7 @@
 .app-shell:not(.home-app-shell){transition:grid-template-columns .22s ease}
 
 .mobile-members-button{display:none!important}
-@media(max-width:700px){.home-app-shell{display:block;min-height:100dvh;overflow:auto}.home-app-shell .server-rail{display:none}.header-actions>.mobile-members-button{display:grid!important}.top-connections[aria-label="Mensagens privadas"]::after{content:"Conversas";font-size:9px}.home-app-shell .rail-bottom-actions{display:contents}}
+@media(max-width:700px){.home-app-shell{display:block;min-height:100dvh;overflow:auto}.home-app-shell .server-rail{display:none}.header-actions>.mobile-members-button{display:grid!important}.top-connections[aria-label="Mensagens privadas"]::after{content:"Conversas";font-size:9px}.home-app-shell .rail-bottom-actions{display:contents}.top-call-indicator{position:fixed;z-index:75;left:12px;bottom:calc(64px + env(safe-area-inset-bottom) + 10px);width:auto;min-width:0;height:38px;display:flex;flex-direction:row;align-items:center;gap:8px;padding:0 11px;border:1px solid rgba(82,224,188,.18);border-radius:11px;color:#65c990;background:#14221c;box-shadow:0 10px 30px rgba(0,0,0,.3)}.top-call-indicator::after{display:none}.top-call-indicator>span{display:grid;max-width:160px;color:#a7a9b3;font-size:8px;text-align:left}.top-call-indicator strong{color:#65c990;font-size:6px}.top-call-indicator>svg:last-child{display:block}}
 
 .rail-unread-count { position: absolute; z-index: 3; top: -5px; right: -5px; min-width: 17px; height: 17px; box-sizing: border-box; display: grid; place-items: center; padding: 0 4px; border: 2px solid #0b0e14; border-radius: 999px; color: #fff; background: #657086; font-size: 7px; line-height: 1; }
 .community-unread-count { min-width: 19px; height: 19px; display: grid; place-items: center; padding: 0 5px; border-radius: 999px; color: #e9ebf0; background: #414754; font-size: 7px; font-style: normal; }
